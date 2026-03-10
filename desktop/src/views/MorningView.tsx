@@ -3,7 +3,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useBackend } from '@/providers/DataProvider'
 import { useRollups } from '@/hooks/useRollups'
 import { formatDate, getGreeting } from '@/lib/utils'
-import { Coffee, Send, Terminal, Clock, Sparkles, RotateCcw } from 'lucide-react'
+import { Coffee, Send, Clock, Sparkles, RotateCcw } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -15,7 +15,9 @@ interface ChatMessage {
   streaming?: boolean
 }
 
-type SessionStatus = 'idle' | 'loading-context' | 'streaming' | 'ready' | 'error'
+type SessionStatus = 'idle' | 'loading-context' | 'connecting' | 'streaming' | 'ready' | 'error'
+
+type ThinkingPhase = 'gathering' | 'reading' | 'sending' | 'thinking'
 
 // ─── Tauri shell integration ─────────────────────────────────────
 
@@ -34,6 +36,7 @@ export function MorningView() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [status, setStatus] = useState<SessionStatus>('idle')
+  const [thinkingPhase, setThinkingPhase] = useState<ThinkingPhase>('gathering')
   const [error, setError] = useState<string | null>(null)
   const [pastSessions, setPastSessions] = useState<Array<{ filename: string; date: string; content: string }>>([])
   const [showHistory, setShowHistory] = useState(false)
@@ -64,10 +67,10 @@ export function MorningView() {
   }, [activeProject])
 
   // Build morning context from project data
-  const buildMorningPrompt = useCallback(async () => {
+  const buildMorningPrompt = useCallback(async (preloadedState?: string) => {
     if (!activeProject) return ''
 
-    const stateContent = await backend.getState(activeProject).catch(() => '')
+    const stateContent = preloadedState ?? await backend.getState(activeProject).catch(() => '')
     const latestRollup = rollups[0]
 
     const parts = [
@@ -108,36 +111,39 @@ export function MorningView() {
     if (!activeProject) return
 
     setStatus('loading-context')
+    setThinkingPhase('gathering')
     setError(null)
-    setMessages([{
-      id: 'system-start',
-      role: 'system',
-      content: `Loading context for ${activeProject}...`,
-      timestamp: new Date(),
-    }])
+    setMessages([])
 
     try {
-      const prompt = await buildMorningPrompt()
+      // Phase: gathering → reading → sending
+      setThinkingPhase('gathering')
+      const stateContent = await backend.getState(activeProject).catch(() => '')
+
+      setThinkingPhase('reading')
+      const prompt = await buildMorningPrompt(stateContent)
+
+      setThinkingPhase('sending')
+      setStatus('connecting')
 
       if (isTauri()) {
         // Spawn claude via Tauri shell
         const { Command } = await import('@tauri-apps/plugin-shell')
 
+        setThinkingPhase('thinking')
         setStatus('streaming')
-        setMessages(prev => [
-          ...prev.filter(m => m.id !== 'system-start'),
-          { id: 'system-ready', role: 'system', content: 'Session started — streaming from Claude...', timestamp: new Date() },
-          { id: 'assistant-briefing', role: 'assistant', content: '', timestamp: new Date(), streaming: true },
-        ])
 
         const command = Command.create('claude', ['-p', prompt, '--allowedTools', 'Read,Glob,Grep'])
         let buffer = ''
 
         command.stdout.on('data', (data: string) => {
           buffer += data
-          setMessages(prev =>
-            prev.map(m => m.id === 'assistant-briefing' ? { ...m, content: buffer } : m)
-          )
+          // First chunk arrives — create the message bubble
+          setMessages(prev => {
+            const existing = prev.find(m => m.id === 'assistant-briefing')
+            if (existing) return prev.map(m => m.id === 'assistant-briefing' ? { ...m, content: buffer } : m)
+            return [...prev, { id: 'assistant-briefing', role: 'assistant' as const, content: buffer, timestamp: new Date(), streaming: true }]
+          })
         })
 
         command.stderr.on('data', (data: string) => {
@@ -166,31 +172,59 @@ export function MorningView() {
         childRef.current = child
 
       } else {
-        // Dev mode — simulate with the prompt content
+        // Dev mode — stream via Vite SSE proxy
+        setThinkingPhase('thinking')
         setStatus('streaming')
-        const briefing = [
-          `**Morning briefing for ${activeProject}**`,
-          '',
-          '> Running in dev mode — Claude CLI spawning requires the native Tauri app.',
-          '> Run `npm run tauri:dev` to use the embedded chat, or use the terminal:',
-          '',
-          '```',
-          `axon morning ${activeProject}`,
-          '```',
-          '',
-          '---',
-          '',
-          '**Context loaded:**',
-          `- ${rollups.length} rollups available`,
-          `- ${activeProjectData?.openLoopCount || 0} open loops`,
-          `- Last rollup: ${activeProjectData?.lastRollup ? formatDate(activeProjectData.lastRollup) : 'none'}`,
-        ].join('\n')
 
-        setMessages([
-          { id: 'system-ready', role: 'system', content: 'Dev mode — showing context summary', timestamp: new Date() },
-          { id: 'assistant-briefing', role: 'assistant', content: briefing, timestamp: new Date() },
-        ])
-        setStatus('ready')
+        try {
+          const res = await fetch('/api/axon/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt }),
+          })
+
+          const reader = res.body?.getReader()
+          if (!reader) throw new Error('No response stream')
+
+          const decoder = new TextDecoder()
+          let buffer = ''
+          let sseBuffer = ''
+
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            sseBuffer += decoder.decode(value, { stream: true })
+            const lines = sseBuffer.split('\n')
+            sseBuffer = lines.pop() || ''
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue
+              try {
+                const event = JSON.parse(line.slice(6))
+                if (event.type === 'content') {
+                  buffer += event.text
+                  setMessages(prev => {
+                    const existing = prev.find(m => m.id === 'assistant-briefing')
+                    if (existing) return prev.map(m => m.id === 'assistant-briefing' ? { ...m, content: buffer } : m)
+                    return [...prev, { id: 'assistant-briefing', role: 'assistant' as const, content: buffer, timestamp: new Date(), streaming: true }]
+                  })
+                } else if (event.type === 'done') {
+                  setMessages(prev =>
+                    prev.map(m => m.id === 'assistant-briefing' ? { ...m, streaming: false } : m)
+                  )
+                  setStatus('ready')
+                } else if (event.type === 'error') {
+                  setError(event.message)
+                  setStatus('error')
+                }
+              } catch {}
+            }
+          }
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Stream failed')
+          setStatus('error')
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start session')
@@ -249,17 +283,56 @@ export function MorningView() {
 
       await command.spawn()
     } else {
-      // Dev mode
+      // Dev mode — stream via Vite SSE proxy
+      const responseId = `assistant-${Date.now()}`
       setMessages(prev => [
         ...prev,
-        {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: '> Follow-up messages require the native Tauri app.\n> Run `npm run tauri:dev` for the full experience.',
-          timestamp: new Date(),
-        },
+        { id: responseId, role: 'assistant', content: '', timestamp: new Date(), streaming: true },
       ])
-      setStatus('ready')
+
+      try {
+        const res = await fetch('/api/axon/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: userMsg.content, continueSession: true }),
+        })
+
+        const reader = res.body?.getReader()
+        if (!reader) throw new Error('No response stream')
+
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let sseBuffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          sseBuffer += decoder.decode(value, { stream: true })
+          const lines = sseBuffer.split('\n')
+          sseBuffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const event = JSON.parse(line.slice(6))
+              if (event.type === 'content') {
+                buffer += event.text
+                setMessages(prev =>
+                  prev.map(m => m.id === responseId ? { ...m, content: buffer } : m)
+                )
+              } else if (event.type === 'done') {
+                setMessages(prev =>
+                  prev.map(m => m.id === responseId ? { ...m, streaming: false } : m)
+                )
+                setStatus('ready')
+              }
+            } catch {}
+          }
+        }
+      } catch {
+        setStatus('ready')
+      }
     }
   }, [input, status])
 
@@ -371,19 +444,6 @@ export function MorningView() {
                   <Sparkles size={16} />
                   Start Briefing
                 </button>
-                {!isTauri() && (
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(`axon morning ${activeProject}`)
-                    }}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-ax-sunken text-ax-text-secondary rounded-lg text-body
-                      hover:bg-ax-elevated transition-colors border border-ax-border-subtle
-                      focus:outline-none focus-visible:ring-2 focus-visible:ring-ax-brand"
-                  >
-                    <Terminal size={16} />
-                    Copy Command
-                  </button>
-                )}
               </div>
             )}
 
@@ -412,11 +472,20 @@ export function MorningView() {
           <MessageBubble key={msg.id} message={msg} />
         ))}
 
-        {/* Status indicator */}
-        {status === 'loading-context' && (
-          <div className="flex items-center gap-2 text-small text-ax-text-tertiary animate-pulse">
-            <div className="w-2 h-2 bg-ax-brand rounded-full animate-bounce" />
-            Loading project context...
+        {/* Thinking indicator — visible during loading + streaming with no content yet */}
+        {(status === 'loading-context' || status === 'connecting' || (status === 'streaming' && messages.length === 0)) && (
+          <ThinkingIndicator phase={thinkingPhase} project={activeProject || ''} />
+        )}
+
+        {/* Mini thinking for follow-up messages (has messages but streaming with no new content yet) */}
+        {status === 'streaming' && messages.length > 0 && !messages.some(m => m.streaming) && (
+          <div className="flex justify-start animate-fade-in">
+            <div className="bg-ax-elevated border border-ax-border rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="thinking-dot w-1.5 h-1.5 rounded-full bg-ax-brand" />
+              ))}
+              <span className="text-small text-ax-text-tertiary">Thinking...</span>
+            </div>
           </div>
         )}
       </div>
@@ -458,7 +527,7 @@ export function MorningView() {
           </div>
           <div className="flex items-center justify-between mt-2">
             <span className="text-micro text-ax-text-tertiary">
-              {isTauri() ? 'Connected to Claude CLI' : 'Dev mode — run tauri:dev for live chat'}
+              Connected to Claude CLI
             </span>
             {status === 'ready' && messages.length > 1 && (
               <button
@@ -493,6 +562,100 @@ export function MorningView() {
   )
 }
 
+// ─── Thinking Indicator ─────────────────────────────────────────
+
+const PHASE_CONFIG: Record<ThinkingPhase, { label: string; detail: string }> = {
+  gathering: { label: 'Gathering context', detail: 'Reading project state and open loops...' },
+  reading: { label: 'Preparing briefing', detail: 'Analyzing latest rollup and priorities...' },
+  sending: { label: 'Connecting to Claude', detail: 'Sending project context...' },
+  thinking: { label: 'Claude is thinking', detail: 'Composing your morning briefing...' },
+}
+
+function ThinkingIndicator({ phase, project }: { phase: ThinkingPhase; project: string }) {
+  const [elapsed, setElapsed] = useState(0)
+  const startRef = useRef(Date.now())
+
+  useEffect(() => {
+    startRef.current = Date.now()
+    setElapsed(0)
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const config = PHASE_CONFIG[phase]
+  const phaseIdx = ['gathering', 'reading', 'sending', 'thinking'].indexOf(phase)
+
+  return (
+    <div className="flex justify-start animate-fade-in-up">
+      <div className="max-w-[85%] w-full">
+        <div className="bg-ax-elevated border border-ax-border rounded-2xl rounded-bl-md px-5 py-5 space-y-4">
+          {/* Animated wave dots */}
+          <div className="flex items-center gap-3">
+            <div className="flex gap-1.5">
+              {[0, 1, 2, 3, 4].map(i => (
+                <div
+                  key={i}
+                  className="thinking-dot w-1.5 h-1.5 rounded-full bg-ax-brand"
+                />
+              ))}
+            </div>
+            <span className="text-body text-ax-text-primary font-medium">
+              {config.label}
+            </span>
+            <span className="text-micro text-ax-text-tertiary font-mono ml-auto">
+              {elapsed}s
+            </span>
+          </div>
+
+          {/* Detail text */}
+          <p className="text-small text-ax-text-secondary">
+            {config.detail}
+          </p>
+
+          {/* Progress phases */}
+          <div className="flex gap-1">
+            {['gathering', 'reading', 'sending', 'thinking'].map((p, i) => (
+              <div
+                key={p}
+                className={`h-1 rounded-full flex-1 transition-all duration-500 relative overflow-hidden ${
+                  i < phaseIdx
+                    ? 'bg-ax-brand'
+                    : i === phaseIdx
+                      ? 'bg-ax-brand/30'
+                      : 'bg-ax-sunken'
+                }`}
+              >
+                {i === phaseIdx && (
+                  <div className="absolute inset-0 bg-ax-brand thinking-progress-bar rounded-full" />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Context info pill */}
+          <div className="flex items-center gap-2 pt-1">
+            <span className="text-micro text-ax-text-tertiary bg-ax-sunken px-2 py-0.5 rounded-full font-mono">
+              {project}
+            </span>
+            {phase === 'thinking' && elapsed > 3 && (
+              <span className="text-micro text-ax-text-ghost animate-fade-in">
+                Claude is reading your project deeply...
+              </span>
+            )}
+            {phase === 'thinking' && elapsed > 8 && (
+              <span className="text-micro text-ax-text-ghost animate-fade-in">
+                Almost there
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Message Bubble ──────────────────────────────────────────────
 
 function MessageBubble({ message }: { message: ChatMessage }) {
@@ -521,14 +684,21 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   // Assistant message
   return (
-    <div className="flex justify-start">
+    <div className="flex justify-start animate-fade-in-up">
       <div className="max-w-[90%]">
         <div className="bg-ax-elevated border border-ax-border rounded-2xl rounded-bl-md px-5 py-4">
           <div className="text-body text-ax-text-primary leading-relaxed whitespace-pre-wrap">
             <AssistantContent content={message.content} />
           </div>
           {message.streaming && (
-            <span className="inline-block w-2 h-4 bg-ax-brand/60 animate-pulse ml-0.5 rounded-sm" />
+            <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-ax-border-subtle">
+              <div className="flex gap-1">
+                {[0, 1, 2].map(i => (
+                  <div key={i} className="thinking-dot w-1 h-1 rounded-full bg-ax-brand/60" />
+                ))}
+              </div>
+              <span className="text-micro text-ax-text-ghost">streaming</span>
+            </div>
           )}
         </div>
         <time className="block text-micro text-ax-text-tertiary mt-1 ml-2">

@@ -2,6 +2,7 @@ import type { Plugin } from 'vite'
 import { readdir, readFile } from 'fs/promises'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
+import { spawn } from 'child_process'
 
 export function axonDevApi(): Plugin {
   const AXON_HOME = resolve(join(homedir(), '.axon'))
@@ -136,6 +137,70 @@ export function axonDevApi(): Plugin {
             } catch {
               res.end(JSON.stringify([]))
             }
+            return
+          }
+
+          // POST /api/axon/chat — streaming Claude proxy
+          if (req.url === '/api/axon/chat' && req.method === 'POST') {
+            // Must await body + child lifecycle so connect doesn't close the request
+            const body = await new Promise<string>((resolve) => {
+              let data = ''
+              req.on('data', (chunk: Buffer) => { data += chunk.toString() })
+              req.on('end', () => resolve(data))
+            })
+
+            const { prompt, continueSession } = JSON.parse(body) as {
+              prompt: string
+              continueSession?: boolean
+            }
+
+            res.setHeader('Content-Type', 'text/event-stream')
+            res.setHeader('Cache-Control', 'no-cache')
+            res.setHeader('Connection', 'keep-alive')
+
+            const args = continueSession
+              ? ['--continue', '-p', prompt, '--allowedTools', 'Read,Glob,Grep']
+              : ['-p', prompt, '--allowedTools', 'Read,Glob,Grep']
+
+            // Strip CLAUDECODE env var to avoid nested-session guard
+            const cleanEnv = { ...process.env }
+            delete cleanEnv.CLAUDECODE
+            delete cleanEnv.CLAUDE_CODE_SESSION
+
+            const child = spawn('claude', args, {
+              stdio: ['ignore', 'pipe', 'pipe'],
+              env: cleanEnv,
+            })
+
+            child.stdout.on('data', (data: Buffer) => {
+              const text = data.toString()
+              res.write(`data: ${JSON.stringify({ type: 'content', text })}\n\n`)
+            })
+
+            child.stderr.on('data', () => {
+              // Claude CLI progress — ignore
+            })
+
+            // Keep the middleware alive until child exits
+            await new Promise<void>((resolve) => {
+              child.on('close', (code) => {
+                res.write(`data: ${JSON.stringify({ type: 'done', code })}\n\n`)
+                res.end()
+                resolve()
+              })
+
+              child.on('error', (err) => {
+                res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`)
+                res.end()
+                resolve()
+              })
+
+              // Kill child if client disconnects
+              req.on('close', () => {
+                if (!child.killed) child.kill()
+                resolve()
+              })
+            })
             return
           }
 

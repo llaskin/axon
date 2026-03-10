@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# axon-status — Show current project state at a glance
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+PROJECT="${PROJECT:-$(basename "$PWD")}"
+WORKSPACE="$AXON_HOME/workspaces/$PROJECT"
+
+if [[ ! -f "$WORKSPACE/state.md" ]]; then
+    echo "Project '$PROJECT' is not initialized."
+    echo ""
+    # List all initialized projects
+    echo "Initialized projects:"
+    for ws in "$AXON_HOME/workspaces"/*/; do
+        if [[ -f "$ws/state.md" ]]; then
+            name=$(basename "$ws")
+            last=$(grep "last_rollup:" "$ws/state.md" 2>/dev/null | awk '{print $2}' | head -1)
+            episodes=$(ls "$ws/episodes/"*.md 2>/dev/null | wc -l | tr -d ' ')
+            echo "  $name — last rollup: ${last:-never}, $episodes episodes"
+        fi
+    done
+    exit 0
+fi
+
+echo "=== $PROJECT ==="
+echo ""
+
+# Last rollup
+LAST=$(grep "last_rollup:" "$WORKSPACE/state.md" 2>/dev/null | awk '{print $2}' | head -1)
+echo "Last rollup:  ${LAST:-never}"
+
+# Episode count
+EPISODES=$(ls "$WORKSPACE/episodes/"*.md 2>/dev/null | wc -l | tr -d ' ')
+echo "Episodes:     $EPISODES"
+
+# Dendrite count
+DENDRITES=$(ls "$WORKSPACE/dendrites/"*.md 2>/dev/null | wc -l | tr -d ' ')
+echo "Dendrites:    $DENDRITES"
+
+# Stream entries
+STREAM_LINES=$(wc -l < "$WORKSPACE/stream.md" 2>/dev/null | tr -d ' ')
+echo "Stream notes: ${STREAM_LINES:-0}"
+
+# Morning sessions
+if [[ -d "$WORKSPACE/mornings" ]]; then
+    MORNINGS=$(find "$WORKSPACE/mornings" -name "*.log" 2>/dev/null | wc -l | tr -d ' ')
+else
+    MORNINGS=0
+fi
+echo "Morning sessions: $MORNINGS"
+
+echo ""
+echo "--- State (summary) ---"
+echo ""
+# Show first 30 lines of state.md (skip frontmatter)
+sed -n '/^#/,$ p' "$WORKSPACE/state.md" | head -30
+
+echo ""
+echo "--- Open Loops ---"
+echo ""
+grep -E "^\s*-\s*\[[ >x]\]" "$WORKSPACE/state.md" 2>/dev/null || echo "(none found)"

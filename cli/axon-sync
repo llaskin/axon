@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# axon-sync — Push/pull Axon memory to/from remote
+# Usage: axon sync [--pull]
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+
+# Allow running from within Claude Code sessions
+unset CLAUDECODE 2>/dev/null || true
+
+if [[ ! -d "$AXON_HOME/.git" ]]; then
+    echo "Axon home is not a git repo. Run 'axon init' first to set up versioning."
+    exit 1
+fi
+
+# Check for remote
+if ! git -C "$AXON_HOME" remote get-url origin &>/dev/null; then
+    echo "No remote configured."
+    read -p "Add a remote? (paste URL or press Enter to skip) " REMOTE_URL
+    if [[ -n "$REMOTE_URL" ]]; then
+        git -C "$AXON_HOME" remote add origin "$REMOTE_URL"
+        echo "  ✓ Remote 'origin' added"
+    else
+        echo "No remote set. Nothing to sync."
+        exit 0
+    fi
+fi
+
+# Pull or push
+if [[ "${1:-}" == "--pull" ]]; then
+    echo "Pulling from remote..."
+    git -C "$AXON_HOME" pull --rebase --quiet
+    echo "  ✓ Pulled"
+else
+    # Stage any uncommitted changes first
+    git -C "$AXON_HOME" add -A 2>/dev/null
+    if ! git -C "$AXON_HOME" diff --cached --quiet 2>/dev/null; then
+        git -C "$AXON_HOME" commit -m "sync: manual $(date +%Y-%m-%d)" --quiet
+    fi
+
+    echo "Pushing to remote..."
+    git -C "$AXON_HOME" push --quiet
+    echo "  ✓ Pushed"
+fi
+
+echo ""
+echo "Last commit: $(git -C "$AXON_HOME" log --oneline -1)"

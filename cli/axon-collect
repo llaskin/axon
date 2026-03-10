@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# axon-collect — Gather dendrite signals for a project
+# Called by: axon collect, or axon rollup (as a pre-step)
+# Writes to: ~/.axon/workspaces/{project}/dendrites/
+
+set -euo pipefail
+
+# Inherited from parent axon script
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+PROJECT="${PROJECT:-$(basename "$PWD")}"
+PROJECT_PATH="${PROJECT_PATH:-$PWD}"
+WORKSPACE="$AXON_HOME/workspaces/$PROJECT"
+DENDRITE_DIR="$WORKSPACE/dendrites"
+LAST_FILE="$DENDRITE_DIR/.last-collection"
+NOW=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+
+mkdir -p "$DENDRITE_DIR"
+
+# Determine time window
+if [[ -n "${SINCE:-}" ]]; then
+    GIT_SINCE="$SINCE"
+elif [[ -f "$LAST_FILE" ]]; then
+    GIT_SINCE=$(cat "$LAST_FILE")
+else
+    GIT_SINCE="24 hours ago"
+fi
+
+echo "Collecting dendrites for $PROJECT..."
+echo "  Path: $PROJECT_PATH"
+echo "  Since: $GIT_SINCE"
+
+# --- GIT-LOG DENDRITE ---
+if git -C "$PROJECT_PATH" rev-parse --git-dir > /dev/null 2>&1; then
+    COMMIT_COUNT=$(git -C "$PROJECT_PATH" log --since="$GIT_SINCE" --oneline 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "$COMMIT_COUNT" -gt 0 ]]; then
+        OUTFILE="$DENDRITE_DIR/${NOW}_git-log.md"
+
+        # Frontmatter
+        cat > "$OUTFILE" << EOF
+---
+type: git-log
+project: $PROJECT
+collected_at: $(echo "$NOW" | sed 's/T\([0-9]*\)-\([0-9]*\)-\([0-9]*\)Z/T\1:\2:\3Z/')
+since: $GIT_SINCE
+commit_count: $COMMIT_COUNT
+branch: $(git -C "$PROJECT_PATH" branch --show-current 2>/dev/null || echo "unknown")
+---
+
+# Git Log: $PROJECT
+
+## Commits ($COMMIT_COUNT)
+
+EOF
+
+        # Each commit with files
+        git -C "$PROJECT_PATH" log --since="$GIT_SINCE" \
+            --format="### %s%n- **SHA:** %h%n- **Time:** %aI%n- **Author:** %an%n" \
+            >> "$OUTFILE"
+
+        # Diff stats
+        echo "" >> "$OUTFILE"
+        echo "## Diff Stats" >> "$OUTFILE"
+        git -C "$PROJECT_PATH" log --since="$GIT_SINCE" --stat --format="" \
+            | tail -1 >> "$OUTFILE" 2>/dev/null || true
+
+        # Most-touched files
+        echo "" >> "$OUTFILE"
+        echo "## Most-Touched Files" >> "$OUTFILE"
+        git -C "$PROJECT_PATH" log --since="$GIT_SINCE" --name-only --format="" \
+            | grep -v '^$' | sort | uniq -c | sort -rn | head -15 \
+            | while read count file; do
+                echo "- \`$file\` ($count changes)" >> "$OUTFILE"
+            done
+
+        echo "  ✓ git-log: $COMMIT_COUNT commits"
+    else
+        echo "  · git-log: no commits since $GIT_SINCE"
+    fi
+else
+    echo "  · git-log: not a git repository"
+fi
+
+# --- FILE-TREE DENDRITE ---
+if git -C "$PROJECT_PATH" rev-parse --git-dir > /dev/null 2>&1; then
+    OUTFILE="$DENDRITE_DIR/${NOW}_file-tree.md"
+    TREE_HASH=$(git -C "$PROJECT_PATH" ls-files | shasum -a 256 | awk '{print $1}')
+    FILE_COUNT=$(git -C "$PROJECT_PATH" ls-files | wc -l | tr -d ' ')
+
+    # Check previous hash
+    PREV_HASH=""
+    PREV_TREE=$(find "$DENDRITE_DIR" -name "*_file-tree.md" -print 2>/dev/null | sort -r | head -1)
+    if [[ -n "${PREV_TREE:-}" ]] && [[ -f "$PREV_TREE" ]]; then
+        PREV_HASH=$(grep "tree_hash:" "$PREV_TREE" 2>/dev/null | awk '{print $2}' || true)
+    fi
+
+    cat > "$OUTFILE" << EOF
+---
+type: file-tree
+project: $PROJECT
+collected_at: $(echo "$NOW" | sed 's/T\([0-9]*\)-\([0-9]*\)-\([0-9]*\)Z/T\1:\2:\3Z/')
+tree_hash: $TREE_HASH
+previous_tree_hash: ${PREV_HASH:-none}
+total_files: $FILE_COUNT
+---
+
+# File Tree: $PROJECT
+
+EOF
+
+    if [[ -n "$PREV_HASH" ]] && [[ "$TREE_HASH" != "$PREV_HASH" ]]; then
+        echo "## Changes (hash differs from previous)" >> "$OUTFILE"
+        # Show added/removed files
+        git -C "$PROJECT_PATH" diff --name-status HEAD~5 HEAD 2>/dev/null >> "$OUTFILE" || true
+    elif [[ -z "$PREV_HASH" ]]; then
+        echo "## Initial snapshot" >> "$OUTFILE"
+        echo "Total tracked files: $FILE_COUNT" >> "$OUTFILE"
+    else
+        echo "## No structural changes" >> "$OUTFILE"
+    fi
+
+    echo "  ✓ file-tree: $FILE_COUNT files (hash: ${TREE_HASH:0:12}...)"
+else
+    echo "  · file-tree: not a git repository"
+fi
+
+# Update last-collection timestamp
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$LAST_FILE"
+
+echo ""
+echo "Done. Dendrites in $DENDRITE_DIR/"
+ls -1 "$DENDRITE_DIR/${NOW}"* 2>/dev/null | sed 's/.*\//  /'

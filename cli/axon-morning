@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# axon-morning — Conversational morning briefing + interactive session
+# Reads latest rollup + state, delivers briefing, then opens a chat
+# If you've been away, automatically runs a catch-up rollup first
+# Conversation is stored in ~/.axon/workspaces/{project}/mornings/
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+PROJECT="${PROJECT:-$(basename "$PWD")}"
+PROJECT_PATH="${PROJECT_PATH:-$PWD}"
+WORKSPACE="$AXON_HOME/workspaces/$PROJECT"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROTOCOL="$SCRIPT_DIR/../protocol.md"
+TODAY=$(date +%Y-%m-%d)
+
+# Check initialized
+if [[ ! -f "$WORKSPACE/state.md" ]]; then
+    echo "Project '$PROJECT' is not initialized. Run: axon init --project $PROJECT"
+    exit 1
+fi
+
+# Create mornings folder for conversation capture
+MORNING_DIR="$WORKSPACE/mornings"
+mkdir -p "$MORNING_DIR"
+
+# --- Gap Detection ---
+# How many days since the last rollup?
+LAST_ROLLUP_DATE=$(grep "last_rollup:" "$WORKSPACE/state.md" 2>/dev/null | awk '{print $2}' | head -1)
+DAYS_AWAY=0
+GAP_CONTEXT=""
+
+if [[ -n "$LAST_ROLLUP_DATE" ]] && [[ "$LAST_ROLLUP_DATE" != "none" ]] && [[ "$LAST_ROLLUP_DATE" != "genesis" ]]; then
+    # Calculate days between last rollup and today
+    if [[ "$(uname)" == "Darwin" ]]; then
+        LAST_EPOCH=$(date -j -f "%Y-%m-%d" "$LAST_ROLLUP_DATE" "+%s" 2>/dev/null || echo "0")
+        TODAY_EPOCH=$(date -j -f "%Y-%m-%d" "$TODAY" "+%s")
+    else
+        LAST_EPOCH=$(date -d "$LAST_ROLLUP_DATE" "+%s" 2>/dev/null || echo "0")
+        TODAY_EPOCH=$(date -d "$TODAY" "+%s")
+    fi
+
+    if [[ "$LAST_EPOCH" != "0" ]]; then
+        DAYS_AWAY=$(( (TODAY_EPOCH - LAST_EPOCH) / 86400 ))
+    fi
+fi
+
+# If away more than 1 day, run a catch-up rollup
+if [[ "$DAYS_AWAY" -gt 1 ]]; then
+    echo "You've been away $DAYS_AWAY days (last rollup: $LAST_ROLLUP_DATE)."
+    echo "Running catch-up rollup covering the gap..."
+    echo ""
+
+    # Collect dendrites for the full gap
+    export SINCE="${LAST_ROLLUP_DATE}"
+    export PROJECT PROJECT_PATH AXON_HOME SCRIPT_DIR PROTOCOL
+    "$SCRIPT_DIR/axon-collect"
+
+    # Run catch-up rollup with gap-aware prompt
+    DENDRITES=""
+    for d in $(find "$WORKSPACE/dendrites" -name "*.md" -newer "$WORKSPACE/state.md" 2>/dev/null | sort); do
+        DENDRITES+="
+$(cat "$d")
+---
+"
+    done
+
+    STATE=$(cat "$WORKSPACE/state.md")
+    PROTOCOL_TEXT=""
+    if [[ -f "$PROTOCOL" ]]; then
+        PROTOCOL_TEXT=$(cat "$PROTOCOL")
+    fi
+
+    echo ""
+    echo "Generating catch-up rollup..."
+
+    CATCHUP_RESULT=$(echo "You are Axon, running in headless mode. The developer has been away for $DAYS_AWAY days (since $LAST_ROLLUP_DATE). Produce a catch-up rollup covering the full gap.
+
+## Protocol
+$PROTOCOL_TEXT
+
+## Current State (stale — from $LAST_ROLLUP_DATE)
+$STATE
+
+## Dendrite Signals (covering $DAYS_AWAY days)
+$DENDRITES
+
+## Task
+Produce a catch-up rollup. This is NOT a normal daily rollup — the developer has been away. Include:
+1. **Summary** — what happened across all $DAYS_AWAY days
+2. **Key Decisions** — anything visible in commits
+3. **What Changed** — major file/feature changes
+4. **Unfinished Work** — use [>] for items that have been waiting
+5. **Recommended Re-entry Point** — where should the developer start? What's the quickest way back into flow?
+
+Tone: 'Welcome back. Here's what happened while you were gone.'" | claude -p --output-format json 2>/dev/null)
+
+    CATCHUP_TEXT=$(echo "$CATCHUP_RESULT" | jq -r '.result' 2>/dev/null)
+
+    if [[ -n "$CATCHUP_TEXT" ]] && [[ "$CATCHUP_TEXT" != "null" ]]; then
+        echo "$CATCHUP_TEXT" > "$WORKSPACE/episodes/${TODAY}_catchup.md"
+        echo "  ✓ Catch-up rollup saved"
+
+        # Update state
+        NEW_STATE=$(echo "You are Axon. Update state.md after a $DAYS_AWAY day gap.
+
+## Previous State (stale)
+$STATE
+
+## Catch-Up Rollup
+$CATCHUP_TEXT
+
+## Task
+Regenerate state.md. Keep under 2000 tokens. Update all sections to reflect current reality after the gap. Add YAML frontmatter with last_rollup: $TODAY" | claude -p --output-format json 2>/dev/null | jq -r '.result' 2>/dev/null)
+
+        if [[ -n "$NEW_STATE" ]] && [[ "$NEW_STATE" != "null" ]]; then
+            echo "$NEW_STATE" > "$WORKSPACE/state.md"
+            echo "  ✓ State updated"
+        fi
+    fi
+
+    GAP_CONTEXT="The developer was away for $DAYS_AWAY days. A catch-up rollup was just generated. Frame the briefing as a 'welcome back' — summarize the catch-up, then suggest where to re-enter."
+    echo ""
+elif [[ "$LAST_ROLLUP_DATE" == "none" ]] || [[ "$LAST_ROLLUP_DATE" == "genesis" ]]; then
+    GAP_CONTEXT="This project only has a genesis rollup — no daily rollups yet. The briefing should orient the developer to the project state from the genesis rollup and suggest first priorities."
+fi
+
+# --- Gather context for briefing ---
+STATE=$(cat "$WORKSPACE/state.md")
+LATEST_ROLLUP=""
+LATEST_EP=$(find "$WORKSPACE/episodes" -name "*.md" -print 2>/dev/null | sort -r | head -1)
+if [[ -n "${LATEST_EP:-}" ]] && [[ -f "$LATEST_EP" ]]; then
+    LATEST_ROLLUP=$(cat "$LATEST_EP")
+fi
+
+PROTOCOL_TEXT=""
+if [[ -f "$PROTOCOL" ]]; then
+    PROTOCOL_TEXT=$(cat "$PROTOCOL")
+fi
+
+# --- Launch interactive session ---
+echo "Starting Axon morning session for $PROJECT..."
+echo ""
+
+SYSTEM_CONTEXT="$PROTOCOL_TEXT
+
+## Current Project State
+$STATE
+
+## Latest Rollup
+$LATEST_ROLLUP
+
+## Gap Context
+$GAP_CONTEXT
+
+## Morning Session
+This is a morning briefing session. The developer just sat down. Greet them with a concise briefing based on the state and latest rollup. Then stay in conversation — they may want to discuss priorities, ask questions, or plan today.
+
+This conversation will be saved to the project's mornings/ folder for future reference."
+
+# Launch interactive Claude with context
+exec claude \
+    --append-system-prompt "$SYSTEM_CONTEXT" \
+    2> >(tee -a "$MORNING_DIR/${TODAY}.log" >&2)

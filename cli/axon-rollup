@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# axon-rollup — Collect dendrites + produce nightly rollup via Claude
+# The core daily loop: gather signals, synthesize, update state
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+PROJECT="${PROJECT:-$(basename "$PWD")}"
+PROJECT_PATH="${PROJECT_PATH:-$PWD}"
+WORKSPACE="$AXON_HOME/workspaces/$PROJECT"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROTOCOL="${PROTOCOL:-$SCRIPT_DIR/../protocol.md}"
+TODAY=$(date +%Y-%m-%d)
+
+# Check initialized
+if [[ ! -f "$WORKSPACE/state.md" ]]; then
+    echo "Project '$PROJECT' is not initialized. Run: axon init --project $PROJECT --path $PROJECT_PATH"
+    exit 1
+fi
+
+# Lockfile — prevent concurrent rollups
+LOCKFILE="$WORKSPACE/.rollup.lock"
+if ! mkdir "$LOCKFILE" 2>/dev/null; then
+    echo "Another rollup is in progress (or stale lock). Remove $LOCKFILE if stale."
+    exit 1
+fi
+trap 'rmdir "$LOCKFILE" 2>/dev/null' EXIT INT TERM
+
+echo "=== Axon Rollup: $PROJECT ($TODAY) ==="
+echo ""
+
+# Step 1: Collect dendrites (don't update .last-collection yet — wait for rollup success)
+echo "Step 1: Collecting dendrites..."
+export PROJECT PROJECT_PATH AXON_HOME SINCE
+"$SCRIPT_DIR/axon-collect"
+echo ""
+
+# Step 2: Gather context for rollup
+echo "Step 2: Assembling rollup context..."
+
+STATE=$(cat "$WORKSPACE/state.md")
+
+# Get recent episodes for continuity (last 3)
+RECENT_EPISODES=""
+while IFS= read -r ep; do
+    [[ -z "$ep" ]] && continue
+    RECENT_EPISODES+="
+---
+### $(basename "$ep")
+$(head -60 "$ep")
+...
+"
+done < <(find "$WORKSPACE/episodes" -name "*.md" -print 2>/dev/null | sort -r | head -3)
+
+# Get recent dendrites (from today's collection)
+DENDRITES=""
+while IFS= read -r d; do
+    [[ -z "$d" ]] && continue
+    DENDRITES+="
+$(cat "$d")
+---
+"
+done < <(find "$WORKSPACE/dendrites" -name "*.md" -print 2>/dev/null | sort -r | head -10)
+
+PROTOCOL_TEXT=""
+if [[ -f "$PROTOCOL" ]]; then
+    PROTOCOL_TEXT=$(cat "$PROTOCOL")
+else
+    echo "  WARNING: protocol.md not found at $PROTOCOL — rollup quality may be reduced"
+fi
+
+DENDRITE_COUNT=$(find "$WORKSPACE/dendrites" -name "*.md" -print 2>/dev/null | wc -l | tr -d ' ')
+EPISODE_COUNT=$(find "$WORKSPACE/episodes" -name "*.md" -print 2>/dev/null | wc -l | tr -d ' ')
+echo "  ✓ State loaded"
+echo "  ✓ $DENDRITE_COUNT dendrite files"
+echo "  ✓ $EPISODE_COUNT previous episodes"
+
+if [[ -z "$DENDRITES" ]]; then
+    echo "  WARNING: No dendrite signals found. Rollup will have limited input."
+fi
+echo ""
+
+# Dry run — show prompt without calling Claude
+if [[ -n "${DRY_RUN:-}" ]]; then
+    echo "=== DRY RUN — Prompt that would be sent ==="
+    echo "Protocol: $(echo "$PROTOCOL_TEXT" | wc -w | tr -d ' ') words"
+    echo "State: $(echo "$STATE" | wc -w | tr -d ' ') words"
+    echo "Episodes context: $(echo "$RECENT_EPISODES" | wc -w | tr -d ' ') words"
+    echo "Dendrites: $(echo "$DENDRITES" | wc -w | tr -d ' ') words"
+    echo "Total prompt: ~$(echo "$PROTOCOL_TEXT$STATE$RECENT_EPISODES$DENDRITES" | wc -w | tr -d ' ') words"
+    exit 0
+fi
+
+# Step 3: Call Claude for rollup
+echo "Step 3: Generating rollup..."
+echo ""
+
+CLAUDE_STDERR=$(mktemp)
+ROLLUP_RESULT=$(echo "You are Axon, running in headless mode. Produce the nightly rollup for '$PROJECT'.
+
+## Protocol
+$PROTOCOL_TEXT
+
+## Current State
+$STATE
+
+## Recent Episodes (for continuity)
+$RECENT_EPISODES
+
+## Today's Dendrite Signals
+$DENDRITES
+
+## Task
+Produce today's rollup. Start with YAML frontmatter, then markdown sections.
+
+### YAML Frontmatter (REQUIRED)
+\`\`\`
+---
+type: rollup
+date: $TODAY
+project: $PROJECT
+headline: \"<one punchy line summarizing the day — max 80 chars>\"
+tags: [<2-4 from: shipping, hardening, testing, bugfix, architecture, blocked, concurrency, compliance, refactor, docs>]
+energy: <high|medium|low — based on commit velocity and scope of changes>
+commits: <number>
+decisions: <number of decision traces>
+open_loops: <number of unfinished items>
+---
+\`\`\`
+
+### Sections
+1. **Summary** — 2-3 sentences, specific numbers and names
+2. **Key Decisions** — use the Decision Trace format:
+   - **Input:** what triggered the decision
+   - **Constraint:** what limited the options
+   - **Tradeoff:** what was weighed
+   - **Decision:** what was chosen and why
+3. **Files Most Touched** — top 5-10 with context
+4. **Unfinished Work** — use [ ] for new items, [>] for carried from previous rollups
+5. **Continuity** — what was done from yesterday's open items, what carries forward
+6. **Recommended Next Steps** — concrete, intuitive, highest-leverage first
+
+Be conversational but precise. Reference specific files, commits, and sessions.
+
+IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary, no notes about your process. Start with the YAML frontmatter (---) and end with the last section. Do not mention files you wrote, tools you used, or sandbox limitations." | claude -p --output-format json 2>"$CLAUDE_STDERR")
+
+ROLLUP_TEXT=$(echo "$ROLLUP_RESULT" | jq -r '.result' 2>/dev/null)
+
+if [[ -z "$ROLLUP_TEXT" ]] || [[ "$ROLLUP_TEXT" == "null" ]]; then
+    echo "ERROR: Rollup generation failed."
+    [[ -s "$CLAUDE_STDERR" ]] && echo "Claude stderr:" && cat "$CLAUDE_STDERR"
+    echo "$ROLLUP_RESULT" | jq '.' 2>/dev/null || echo "$ROLLUP_RESULT"
+    rm -f "$CLAUDE_STDERR"
+    exit 1
+fi
+rm -f "$CLAUDE_STDERR"
+
+# Step 4: Write outputs (same-day protection)
+EPISODE_FILE="$WORKSPACE/episodes/${TODAY}_rollup.md"
+if [[ -f "$EPISODE_FILE" ]]; then
+    EPISODE_FILE="$WORKSPACE/episodes/${TODAY}_rollup_$(date +%H%M%S).md"
+fi
+
+# Write to temp first, then move (atomic)
+TMPFILE=$(mktemp "$WORKSPACE/episodes/.tmp.XXXXXX")
+echo "$ROLLUP_TEXT" > "$TMPFILE" && mv "$TMPFILE" "$EPISODE_FILE"
+echo "  ✓ Rollup → $(basename "$EPISODE_FILE")"
+
+# Step 5: Update state.md via Claude
+echo ""
+echo "Step 5: Updating state..."
+
+CLAUDE_STDERR2=$(mktemp)
+NEW_STATE=$(echo "You are Axon. Given this rollup and the previous state, produce an updated state.md.
+
+## Previous State
+$STATE
+
+## Today's Rollup
+$ROLLUP_TEXT
+
+## Task
+Regenerate state.md. MUST stay under 2000 tokens. If exceeding, prune decisions older than 14 days, compress timeline, archive completed items. Include:
+- What This Project Is (keep stable, rarely changes)
+- Current Focus (update based on rollup)
+- Where Things Stand (compact status per workstream)
+- Active Decisions (recent decisions with dates)
+- Open Loops (checklist — merge old + new, mark completed with [x])
+- Blockers
+- Suggested Next Move
+- Key Files table
+- Recent Timeline (last 5-7 days, one line each)
+
+Add YAML frontmatter: type: state, project: $PROJECT, last_rollup: $TODAY
+
+IMPORTANT: Output ONLY the state.md content. No preamble, no meta-commentary, no explanation of changes. Start with the YAML frontmatter (---) and end with the last section." | claude -p --output-format json 2>"$CLAUDE_STDERR2" | jq -r '.result' 2>/dev/null)
+rm -f "$CLAUDE_STDERR2"
+
+if [[ -n "$NEW_STATE" ]] && [[ "$NEW_STATE" != "null" ]]; then
+    echo "$NEW_STATE" > "$WORKSPACE/state.md"
+    echo "  ✓ State updated"
+else
+    echo "  · State update failed (keeping previous state)"
+fi
+
+# Log it
+echo "- [$(date -u +"%Y-%m-%dT%H:%M:%SZ")] @axon: Rollup committed: $TODAY → $(basename "$EPISODE_FILE")" >> "$WORKSPACE/stream.md"
+
+# Step 6: Auto-commit to Axon git repo
+if [[ -d "$AXON_HOME/.git" ]]; then
+    git -C "$AXON_HOME" add "workspaces/$PROJECT/" 2>/dev/null
+    if ! git -C "$AXON_HOME" diff --cached --quiet 2>/dev/null; then
+        git -C "$AXON_HOME" commit -m "rollup: $PROJECT $TODAY" --quiet 2>/dev/null
+        echo "  ✓ Committed to Axon history"
+    fi
+fi
+
+# Show cost
+COST=$(echo "$ROLLUP_RESULT" | jq '.total_cost_usd // empty' 2>/dev/null)
+echo ""
+echo "=== Done ==="
+echo "  Rollup:  $EPISODE_FILE"
+echo "  State:   $WORKSPACE/state.md"
+echo "  Cost:    \$${COST:-unknown}"
+echo ""
+echo "Run 'axon morning --project $PROJECT' tomorrow for your briefing."

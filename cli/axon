@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# axon — CLI for the Axon project context system
+# Usage: axon <command> [options]
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROTOCOL="$SCRIPT_DIR/../protocol.md"
+
+# Allow running from within Claude Code sessions
+unset CLAUDECODE 2>/dev/null || true
+
+# Check dependencies
+for cmd in claude jq git; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "Error: '$cmd' is required but not found."
+        [[ "$cmd" == "claude" ]] && echo "  Install: https://claude.ai/code"
+        [[ "$cmd" == "jq" ]] && echo "  Install: brew install jq"
+        exit 1
+    fi
+done
+
+usage() {
+    cat << 'EOF'
+Usage: axon <command> [options]
+
+Commands:
+  init      Initialize Axon for a project (genesis rollup)
+  collect   Gather dendrite signals (git-log, file-tree)
+  rollup    Collect signals + produce nightly rollup via Claude
+  morning   Get a conversational morning briefing
+  log       Append a quick note to the stream
+  status    Show current project state
+  sync      Push/pull Axon memory to/from remote
+  cron      Install/remove nightly rollup schedule
+
+Options:
+  --project NAME    Project name (default: current directory name)
+  --path DIR        Project path (default: current directory)
+  --since PERIOD    Time window for collect (default: 24h or last rollup)
+  --dry-run         Show what would happen without calling Claude
+
+Examples:
+  axon init --project eat-ai-sar-portal --path ~/Github/eat-ai-org/eat-ai-sar-portal
+  axon rollup --project eat-ai-sar-portal
+  axon morning
+  axon log "Spoke with brand team, pilot confirmed for next week"
+EOF
+    exit 1
+}
+
+# Parse global args
+PROJECT=""
+PROJECT_PATH=""
+SINCE=""
+DRY_RUN=""
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --project)
+                [[ $# -lt 2 ]] && { echo "Error: --project requires a value"; exit 1; }
+                PROJECT="$2"; shift 2 ;;
+            --path)
+                [[ $# -lt 2 ]] && { echo "Error: --path requires a value"; exit 1; }
+                PROJECT_PATH="$2"; shift 2 ;;
+            --since)
+                [[ $# -lt 2 ]] && { echo "Error: --since requires a value"; exit 1; }
+                SINCE="$2"; shift 2 ;;
+            --dry-run) DRY_RUN="1"; shift ;;
+            --help|-h) usage ;;
+            *) REMAINING_ARGS+=("$1"); shift ;;
+        esac
+    done
+}
+
+# Resolve project from args or cwd
+resolve_project() {
+    if [[ -z "$PROJECT" ]]; then
+        PROJECT=$(basename "$PWD")
+    fi
+    # Reject spaces in project names
+    if [[ "$PROJECT" =~ [[:space:]] ]]; then
+        echo "Error: Project name '$PROJECT' contains spaces. Use --project to specify a safe name."
+        exit 1
+    fi
+    if [[ -z "$PROJECT_PATH" ]]; then
+        PROJECT_PATH="$PWD"
+    fi
+    WORKSPACE="$AXON_HOME/workspaces/$PROJECT"
+}
+
+# Dispatch
+COMMAND="${1:-}"
+shift || true
+
+REMAINING_ARGS=()
+parse_args "$@"
+resolve_project
+
+# Export for subcommands
+export PROJECT PROJECT_PATH AXON_HOME SINCE SCRIPT_DIR PROTOCOL DRY_RUN
+
+case "$COMMAND" in
+    init)    exec "$SCRIPT_DIR/axon-init" ;;
+    collect) exec "$SCRIPT_DIR/axon-collect" ;;
+    rollup)  exec "$SCRIPT_DIR/axon-rollup" ;;
+    morning) exec "$SCRIPT_DIR/axon-morning" ;;
+    log)     exec "$SCRIPT_DIR/axon-log" ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"} ;;
+    status)  exec "$SCRIPT_DIR/axon-status" ;;
+    sync)    exec "$SCRIPT_DIR/axon-sync" ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"} ;;
+    cron)    exec "$SCRIPT_DIR/axon-cron" ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"} ;;
+    --version|-v) echo "axon v0.1.0 (poc)"; exit 0 ;;
+    *)       usage ;;
+esac

@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# axon-init — Initialize Axon for a project (genesis rollup)
+# Creates workspace, reads project deeply, produces genesis state + rollup
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+PROJECT="${PROJECT:-$(basename "$PWD")}"
+PROJECT_PATH="${PROJECT_PATH:-$PWD}"
+WORKSPACE="$AXON_HOME/workspaces/$PROJECT"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROTOCOL="$SCRIPT_DIR/../protocol.md"
+
+# Check if already initialized
+if [[ -f "$WORKSPACE/state.md" ]]; then
+    echo "Project '$PROJECT' is already initialized at $WORKSPACE"
+    echo "To re-initialize, delete $WORKSPACE and run again."
+    exit 1
+fi
+
+echo "=== Axon Init: $PROJECT ==="
+echo "  Path: $PROJECT_PATH"
+echo "  Workspace: $WORKSPACE"
+echo ""
+
+# Initialize git in AXON_HOME if first project
+if [[ ! -d "$AXON_HOME/.git" ]]; then
+    echo "First project — initializing Axon home..."
+    read -p "  Version your Axon memory with git? [Y/n] " -n 1 -r REPLY
+    echo ""
+    if [[ -z "$REPLY" ]] || [[ "$REPLY" =~ ^[Yy]$ ]]; then
+        git -C "$AXON_HOME" init --quiet
+        cat > "$AXON_HOME/.gitignore" << 'GITIGNORE'
+# Don't version temp files or locks
+workspaces/*/.rollup.lock
+workspaces/*/dendrites/.last-collection
+workspaces/*/episodes/.tmp.*
+GITIGNORE
+        echo "  ✓ Git initialized in $AXON_HOME"
+
+        read -p "  Add a remote for backup/sync? (paste URL or press Enter to skip) " REMOTE_URL
+        if [[ -n "$REMOTE_URL" ]]; then
+            git -C "$AXON_HOME" remote add origin "$REMOTE_URL"
+            echo "  ✓ Remote 'origin' added"
+        fi
+    fi
+fi
+
+# Create workspace structure
+mkdir -p "$WORKSPACE"/{episodes,dendrites,mornings}
+touch "$WORKSPACE/stream.md"
+
+# Write project config
+cat > "$WORKSPACE/config.yaml" << EOF
+project: $PROJECT
+project_path: $PROJECT_PATH
+created_at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+dendrites:
+  git-log:
+    enabled: true
+    max_commits: 200
+  file-tree:
+    enabled: true
+  session-summary:
+    enabled: false
+  todo-state:
+    enabled: false
+  manual-note:
+    enabled: true
+
+rollup:
+  auto_collect: true
+  context_window: 3
+  model: claude-opus-4-6
+
+timezone: $(date +%Z)
+EOF
+
+echo "Workspace created."
+echo ""
+
+# Gather project context
+echo "Reading project..."
+
+cd "$PROJECT_PATH"
+
+# CLAUDE.md or README
+PROJECT_DOCS=""
+if [[ -f "CLAUDE.md" ]]; then
+    PROJECT_DOCS=$(cat CLAUDE.md)
+    echo "  ✓ CLAUDE.md found"
+elif [[ -f "README.md" ]]; then
+    PROJECT_DOCS=$(cat README.md)
+    echo "  ✓ README.md found"
+else
+    echo "  · No CLAUDE.md or README.md"
+fi
+
+# Git history
+GIT_TOTAL=0
+GIT_FIRST=""
+GIT_LOG_90=""
+GIT_BRANCHES=""
+if git rev-parse --git-dir > /dev/null 2>&1; then
+    GIT_TOTAL=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+    GIT_FIRST=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -1 | xargs git log --oneline -1 2>/dev/null || echo "unknown")
+    GIT_LOG_90=$(git log --since="90 days ago" --format="%h %ad %s" --date=short -200 2>/dev/null)
+    GIT_BRANCHES=$(git branch -a 2>/dev/null)
+    echo "  ✓ Git: $GIT_TOTAL commits, first: ${GIT_FIRST:0:40}..."
+else
+    echo "  · Not a git repository"
+fi
+
+# Directory structure
+DIR_STRUCT=$(find . -maxdepth 2 -type d \
+    -not -path '*/node_modules/*' \
+    -not -path '*/.git/*' \
+    -not -path '*/__pycache__/*' \
+    -not -path '*/.next/*' \
+    -not -path '*/dist/*' \
+    -not -path '*/.expo/*' \
+    -not -path '*/.venv/*' \
+    -not -path '*/.pnpm-store/*' \
+    -not -path '*/.ruff_cache/*' \
+    -not -path '*/.pytest_cache/*' \
+    2>/dev/null | sort)
+echo "  ✓ Directory structure scanned"
+
+echo ""
+echo "Generating genesis rollup (this may take 1-2 minutes)..."
+echo ""
+
+# Build the genesis prompt
+GENESIS_RESULT=$(echo "You are Axon, producing a GENESIS ROLLUP — your first look at this project.
+
+## IMPORTANT: Epistemic Honesty
+
+This is a genesis rollup — you are reconstructing project history from artifacts (commits, file structure, documentation), NOT from lived experience. You can see WHAT happened but not always WHY decisions were made.
+
+Be honest about this limitation:
+- Flag inferred decisions with '(inferred from commits — no tacit context)'
+- Distinguish KNOWN (from docs/commits) from GUESSED (from patterns)
+- Note that daily Axon rollups from day one would have richer decision traces
+- This is a reconstruction, not a recording
+
+## Project Documentation
+$PROJECT_DOCS
+
+## Stats: $GIT_TOTAL total commits. First: $GIT_FIRST
+## Branches:
+$GIT_BRANCHES
+
+## Directory Structure
+$DIR_STRUCT
+
+## Last 90 Days of Commits
+$GIT_LOG_90
+
+## Task
+
+Produce a GENESIS ROLLUP with:
+1. **Project Overview** — what this is, architecture, scale
+2. **Recent Trajectory** (last 2 weeks) — what's hot
+3. **Architecture Snapshot** — key modules, databases, deployment
+4. **Inferred Decision History** — major decisions visible in commits (mark as inferred)
+5. **Current State** — what's working, what's in progress
+6. **Open Loops** — unfinished work from recent commits
+7. **Recommended Next Steps** — concrete, intuitive, make the dev say 'yes, exactly right'
+
+Be conversational, precise, specific." | claude -p --output-format json 2>/dev/null)
+
+# Extract result
+ROLLUP_TEXT=$(echo "$GENESIS_RESULT" | jq -r '.result' 2>/dev/null)
+USAGE=$(echo "$GENESIS_RESULT" | jq '.usage' 2>/dev/null)
+
+if [[ -z "$ROLLUP_TEXT" ]] || [[ "$ROLLUP_TEXT" == "null" ]]; then
+    echo "ERROR: Genesis rollup failed. Raw output:"
+    echo "$GENESIS_RESULT"
+    exit 1
+fi
+
+# Write genesis episode
+echo "$ROLLUP_TEXT" > "$WORKSPACE/episodes/0000_genesis.md"
+echo "  ✓ Genesis rollup → episodes/0000_genesis.md"
+
+# Write initial state.md
+cat > "$WORKSPACE/state.md" << EOF
+---
+type: state
+project: $PROJECT
+last_rollup: genesis
+last_activity: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+---
+
+# State: $PROJECT
+
+> Initialized $(date +%Y-%m-%d) via genesis rollup.
+> This state was reconstructed from artifacts — not from lived Axon experience.
+> Decision traces will improve as daily rollups accumulate tacit knowledge.
+
+$(echo "$ROLLUP_TEXT" | grep -A 1000 "## 5\. Current State\|## Current State" | head -40)
+
+---
+
+*See episodes/0000_genesis.md for the full genesis rollup.*
+EOF
+
+echo "  ✓ Initial state → state.md"
+
+# Log the init
+echo "- [$(date -u +"%Y-%m-%dT%H:%M:%SZ")] @axon: Genesis rollup created. Project initialized." >> "$WORKSPACE/stream.md"
+echo "  ✓ Stream initialized"
+
+echo ""
+echo "=== Done ==="
+echo "  Workspace: $WORKSPACE"
+echo "  Genesis:   $WORKSPACE/episodes/0000_genesis.md"
+echo "  State:     $WORKSPACE/state.md"
+echo "  Config:    $WORKSPACE/config.yaml"
+echo ""
+echo "Next: run 'axon rollup --project $PROJECT' nightly, or 'axon morning' for a briefing."

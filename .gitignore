@@ -1,0 +1,8 @@
+# Internal reference docs
+docs/internal/
+
+# OS
+.DS_Store
+
+# Editor
+.cursor/

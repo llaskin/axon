@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# axon-log — Append a quick note to the project stream
+# Usage: axon log "Spoke with brand team, pilot confirmed"
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+PROJECT="${PROJECT:-$(basename "$PWD")}"
+WORKSPACE="$AXON_HOME/workspaces/$PROJECT"
+
+if [[ ! -f "$WORKSPACE/stream.md" ]]; then
+    echo "Project '$PROJECT' is not initialized. Run: axon init --project $PROJECT"
+    exit 1
+fi
+
+MESSAGE="$*"
+
+if [[ -z "$MESSAGE" ]]; then
+    echo "Usage: axon log \"your note here\""
+    exit 1
+fi
+
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+echo "- [$TIMESTAMP] @user: $MESSAGE" >> "$WORKSPACE/stream.md"
+echo "Logged to $PROJECT stream."

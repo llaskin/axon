@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# axon-cron — Install/remove nightly rollup schedule via launchd (macOS) or cron (Linux)
+# Usage: axon cron install --project myapp --path ~/Github/myapp [--time 02:00]
+#        axon cron remove --project myapp
+#        axon cron status
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+PROJECT="${PROJECT:-}"
+PROJECT_PATH="${PROJECT_PATH:-}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CRON_TIME="${CRON_TIME:-02:00}"
+
+# Parse subcommand
+ACTION="${1:-status}"
+shift 2>/dev/null || true
+
+# Parse remaining args
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --time) CRON_TIME="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+if [[ -z "$PROJECT" ]]; then
+    echo "Error: --project is required for cron commands"
+    echo "Usage: axon cron install --project myapp --path ~/Github/myapp [--time 02:00]"
+    exit 1
+fi
+
+HOUR=$(echo "$CRON_TIME" | cut -d: -f1)
+MINUTE=$(echo "$CRON_TIME" | cut -d: -f2)
+LABEL="com.axon.rollup.${PROJECT}"
+
+case "$(uname)" in
+    Darwin)
+        PLIST_DIR="$HOME/Library/LaunchAgents"
+        PLIST_FILE="$PLIST_DIR/$LABEL.plist"
+        LOG_DIR="$AXON_HOME/logs"
+
+        case "$ACTION" in
+            install)
+                if [[ -z "$PROJECT_PATH" ]]; then
+                    echo "Error: --path is required for install"
+                    exit 1
+                fi
+
+                mkdir -p "$PLIST_DIR" "$LOG_DIR"
+
+                cat > "$PLIST_FILE" << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$SCRIPT_DIR/axon</string>
+        <string>rollup</string>
+        <string>--project</string>
+        <string>$PROJECT</string>
+        <string>--path</string>
+        <string>$PROJECT_PATH</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>$HOUR</integer>
+        <key>Minute</key>
+        <integer>$MINUTE</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/${PROJECT}_rollup.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/${PROJECT}_rollup.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin</string>
+        <key>HOME</key>
+        <string>$HOME</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
+                launchctl load "$PLIST_FILE" 2>/dev/null
+                echo "=== Cron Installed ==="
+                echo "  Project:  $PROJECT"
+                echo "  Schedule: daily at $CRON_TIME"
+                echo "  Plist:    $PLIST_FILE"
+                echo "  Log:      $LOG_DIR/${PROJECT}_rollup.log"
+                echo ""
+                echo "Rollups will run nightly. View logs with:"
+                echo "  tail -f $LOG_DIR/${PROJECT}_rollup.log"
+                ;;
+
+            remove)
+                if [[ -f "$PLIST_FILE" ]]; then
+                    launchctl unload "$PLIST_FILE" 2>/dev/null
+                    rm -f "$PLIST_FILE"
+                    echo "Removed nightly rollup for $PROJECT"
+                else
+                    echo "No cron found for $PROJECT"
+                fi
+                ;;
+
+            status)
+                if [[ -f "$PLIST_FILE" ]]; then
+                    echo "=== $PROJECT ==="
+                    echo "  Schedule: active"
+                    echo "  Plist:    $PLIST_FILE"
+                    if launchctl list "$LABEL" &>/dev/null; then
+                        echo "  Loaded:   yes"
+                    else
+                        echo "  Loaded:   no (run: launchctl load $PLIST_FILE)"
+                    fi
+                    if [[ -f "$LOG_DIR/${PROJECT}_rollup.log" ]]; then
+                        echo "  Last run: $(tail -1 "$LOG_DIR/${PROJECT}_rollup.log" 2>/dev/null | head -c 60)"
+                    fi
+                else
+                    echo "No cron configured for $PROJECT"
+                    echo "Install with: axon cron install --project $PROJECT --path /path/to/project"
+                fi
+                ;;
+
+            *)
+                echo "Usage: axon cron <install|remove|status> --project NAME [--path DIR] [--time HH:MM]"
+                exit 1
+                ;;
+        esac
+        ;;
+
+    Linux)
+        CRON_CMD="$MINUTE $HOUR * * * PROJECT=$PROJECT PROJECT_PATH=$PROJECT_PATH $SCRIPT_DIR/axon rollup >> $AXON_HOME/logs/${PROJECT}_rollup.log 2>&1"
+        CRON_TAG="# axon:$PROJECT"
+
+        case "$ACTION" in
+            install)
+                if [[ -z "$PROJECT_PATH" ]]; then
+                    echo "Error: --path is required for install"
+                    exit 1
+                fi
+
+                mkdir -p "$AXON_HOME/logs"
+
+                # Remove existing entry if present, then add new one
+                (crontab -l 2>/dev/null | grep -v "$CRON_TAG"; echo "$CRON_CMD $CRON_TAG") | crontab -
+                echo "=== Cron Installed ==="
+                echo "  Project:  $PROJECT"
+                echo "  Schedule: daily at $CRON_TIME"
+                echo "  Log:      $AXON_HOME/logs/${PROJECT}_rollup.log"
+                ;;
+
+            remove)
+                crontab -l 2>/dev/null | grep -v "$CRON_TAG" | crontab -
+                echo "Removed nightly rollup for $PROJECT"
+                ;;
+
+            status)
+                if crontab -l 2>/dev/null | grep -q "$CRON_TAG"; then
+                    echo "=== $PROJECT ==="
+                    echo "  Schedule: active"
+                    crontab -l | grep "$CRON_TAG"
+                else
+                    echo "No cron configured for $PROJECT"
+                fi
+                ;;
+
+            *)
+                echo "Usage: axon cron <install|remove|status> --project NAME [--path DIR] [--time HH:MM]"
+                exit 1
+                ;;
+        esac
+        ;;
+esac

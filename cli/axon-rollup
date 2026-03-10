@@ -20,9 +20,34 @@ fi
 
 # Lockfile — prevent concurrent rollups
 LOCKFILE="$WORKSPACE/.rollup.lock"
+FORCE="${FORCE:-}"
+
 if ! mkdir "$LOCKFILE" 2>/dev/null; then
-    echo "Another rollup is in progress (or stale lock). Remove $LOCKFILE if stale."
-    exit 1
+    # Check lock age — stale if older than 30 minutes
+    LOCK_AGE=0
+    if [[ -d "$LOCKFILE" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            LOCK_CREATED=$(stat -f %m "$LOCKFILE" 2>/dev/null || echo "0")
+        else
+            LOCK_CREATED=$(stat -c %Y "$LOCKFILE" 2>/dev/null || echo "0")
+        fi
+        NOW_EPOCH=$(date +%s)
+        LOCK_AGE=$(( NOW_EPOCH - LOCK_CREATED ))
+    fi
+
+    if [[ -n "$FORCE" ]]; then
+        echo "WARNING: Forcing past stale lock (age: ${LOCK_AGE}s)"
+        rmdir "$LOCKFILE" 2>/dev/null || true
+        mkdir "$LOCKFILE"
+    elif [[ "$LOCK_AGE" -gt 1800 ]]; then
+        echo "Stale lock detected (${LOCK_AGE}s old). Removing..."
+        rmdir "$LOCKFILE" 2>/dev/null || true
+        mkdir "$LOCKFILE"
+    else
+        echo "Another rollup is in progress (lock age: ${LOCK_AGE}s)."
+        echo "If stale, run with: FORCE=1 axon rollup"
+        exit 1
+    fi
 fi
 trap 'rmdir "$LOCKFILE" 2>/dev/null' EXIT INT TERM
 
@@ -126,25 +151,38 @@ project: $PROJECT
 headline: \"<one punchy line summarizing the day — max 80 chars>\"
 tags: [<2-4 from: shipping, hardening, testing, bugfix, architecture, blocked, concurrency, compliance, refactor, docs>]
 energy: <high|medium|low — based on commit velocity and scope of changes>
+momentum: <accelerating|steady|decelerating — compared to recent days>
 commits: <number>
 decisions: <number of decision traces>
 open_loops: <number of unfinished items>
+risk_items: <number of items flagged as risky>
 ---
 \`\`\`
 
 ### Sections
 1. **Summary** — 2-3 sentences, specific numbers and names
-2. **Key Decisions** — use the Decision Trace format:
+2. **Momentum** — one paragraph: is this project accelerating, steady, or decelerating? Compare today's output to recent rollups. Note velocity changes, scope shifts, or signs of being stuck. Be honest — "you shipped 3 features but none have tests" is useful. End with a directional word: accelerating, cruising, stalling, or blocked.
+3. **Key Decisions** — use the Decision Trace format:
    - **Input:** what triggered the decision
    - **Constraint:** what limited the options
    - **Tradeoff:** what was weighed
    - **Decision:** what was chosen and why
-3. **Files Most Touched** — top 5-10 with context
-4. **Unfinished Work** — use [ ] for new items, [>] for carried from previous rollups
-5. **Continuity** — what was done from yesterday's open items, what carries forward
-6. **Recommended Next Steps** — concrete, intuitive, highest-leverage first
+4. **Files Most Touched** — top 5-10 with context
+5. **Unfinished Work** — use [ ] for new items, [>] for carried from previous rollups
+6. **Risk Flags** — items that need attention:
+   - Any item carried for >3 days without progress: flag it with ⚠️ and recommend: decide, delegate, or drop
+   - Any code shipped without tests: flag it
+   - Any TODO/FIXME in hot files
+   - If nothing is risky, say so in one line
+7. **Continuity** — what was done from yesterday's open items, what carries forward
+8. **Recommended Next Steps** — rank by LEVERAGE, not recency. For each:
+   - What to do (specific, actionable)
+   - Why it matters now (what it unblocks or what risk it reduces)
+   - Estimated scope (quick win / half-day / multi-day)
+   Don't just summarize — have an opinion. If something should be dropped, say so. If something is being avoided, call it out.
 
-Be conversational but precise. Reference specific files, commits, and sessions.
+### Tone
+Be conversational but precise. Reference specific files, commits, and sessions. You are a sharp colleague reviewing the day's work — not a summarizer. Say what matters, why it matters, and what the developer should do about it.
 
 IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary, no notes about your process. Start with the YAML frontmatter (---) and end with the last section. Do not mention files you wrote, tools you used, or sandbox limitations." | claude -p --output-format json --allowedTools "Read,Glob,Grep" 2>"$CLAUDE_STDERR")
 

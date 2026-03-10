@@ -7,7 +7,7 @@ import { getGreeting } from '@/lib/utils'
 export function TimelineView() {
   const activeProject = useProjectStore((s) => s.activeProject)
   const openRollup = useUIStore((s) => s.openRollup)
-  const { rollups, loading } = useRollups(activeProject)
+  const { rollups, loading, error } = useRollups(activeProject)
 
   return (
     <div>
@@ -23,7 +23,13 @@ export function TimelineView() {
         </p>
       </header>
 
-      {loading && (
+      {error && (
+        <div className="bg-ax-error-subtle border border-ax-error/20 rounded-xl p-5 mb-6">
+          <p className="text-body text-ax-error">{error}</p>
+        </div>
+      )}
+
+      {loading && !error && (
         <div className="space-y-4">
           {[0, 1, 2].map(i => (
             <div key={i} className="bg-ax-elevated rounded-xl border border-ax-border p-6 animate-pulse">

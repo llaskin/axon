@@ -156,6 +156,17 @@ export function StateView() {
   const openCount = state.openLoops.filter(l => !l.checked).length
   const doneCount = state.openLoops.filter(l => l.checked).length
 
+  // Staleness: days since last rollup
+  let staleDays = 0
+  let staleLevel: 'fresh' | 'amber' | 'red' = 'fresh'
+  if (state.lastRollup && state.lastRollup !== 'genesis') {
+    const rollupDate = new Date(state.lastRollup)
+    const now = new Date()
+    staleDays = Math.floor((now.getTime() - rollupDate.getTime()) / (1000 * 60 * 60 * 24))
+    if (staleDays >= 3) staleLevel = 'red'
+    else if (staleDays >= 1) staleLevel = 'amber'
+  }
+
   return (
     <div>
       <header className="mb-8">
@@ -165,12 +176,23 @@ export function StateView() {
         <h1 className="font-serif italic text-display text-ax-text-primary tracking-tight">
           State
         </h1>
-        <p className="text-body text-ax-text-secondary mt-2">
-          Current context for <span className="font-mono">{activeProject}</span>
-          {state.lastRollup && (
-            <span className="text-ax-text-tertiary"> &middot; last rollup {formatDate(state.lastRollup)}</span>
+        <div className="flex items-center gap-3 mt-2">
+          <p className="text-body text-ax-text-secondary">
+            Current context for <span className="font-mono">{activeProject}</span>
+            {state.lastRollup && (
+              <span className="text-ax-text-tertiary"> &middot; last rollup {formatDate(state.lastRollup)}</span>
+            )}
+          </p>
+          {staleLevel !== 'fresh' && (
+            <span className={`font-mono text-micro px-2 py-0.5 rounded-full ${
+              staleLevel === 'red'
+                ? 'bg-ax-error-subtle text-ax-error'
+                : 'bg-ax-warning-subtle text-ax-warning'
+            }`}>
+              {staleDays}d stale
+            </span>
           )}
-        </p>
+        </div>
       </header>
 
       {/* Current Focus — full width hero */}

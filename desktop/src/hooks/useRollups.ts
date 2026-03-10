@@ -5,17 +5,23 @@ import type { RollupEpisode, RollupFrontmatter } from '@/lib/types'
 export function useRollups(project: string | null) {
   const [rollups, setRollups] = useState<RollupEpisode[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!project) {
       setRollups([])
       setLoading(false)
+      setError(null)
       return
     }
 
     setLoading(true)
+    setError(null)
     fetch(`/api/axon/projects/${encodeURIComponent(project)}/rollups`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`Failed to load rollups (${r.status})`)
+        return r.json()
+      })
       .then((raw: Array<{ filename: string; content: string }>) => {
         const parsed = raw.map(r => {
           const result = parseFrontmatter<RollupFrontmatter>(r.content)
@@ -40,11 +46,12 @@ export function useRollups(project: string | null) {
         setRollups(parsed)
         setLoading(false)
       })
-      .catch(() => {
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Failed to load rollups')
         setRollups([])
         setLoading(false)
       })
   }, [project])
 
-  return { rollups, loading }
+  return { rollups, loading, error }
 }

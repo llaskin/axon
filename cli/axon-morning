@@ -181,7 +181,9 @@ if [[ -n "$LAST_ROLLUP_DATE" ]] && [[ "$LAST_ROLLUP_DATE" != "none" ]] && [[ "$L
     fi
 
     if [[ "$LAST_EPOCH" != "0" ]]; then
-        DAYS_AWAY=$(( (TODAY_EPOCH - LAST_EPOCH) / 86400 ))
+        # Ceiling division — 23 hours should count as 1 day, not 0
+        DIFF_SECS=$(( TODAY_EPOCH - LAST_EPOCH ))
+        DAYS_AWAY=$(( (DIFF_SECS + 86399) / 86400 ))
     fi
 fi
 
@@ -190,6 +192,17 @@ if [[ "$DAYS_AWAY" -gt 1 ]]; then
     echo "You've been away $DAYS_AWAY days (last rollup: $LAST_ROLLUP_DATE)."
     echo "Running catch-up rollup covering the gap..."
     echo ""
+
+    # Acquire lockfile — prevent concurrent rollup from cron
+    LOCKFILE="$WORKSPACE/.rollup.lock"
+    if ! mkdir "$LOCKFILE" 2>/dev/null; then
+        echo "A rollup is already in progress. Skipping catch-up."
+        echo ""
+        DAYS_AWAY=0
+    fi
+
+    if [[ "$DAYS_AWAY" -gt 1 ]]; then
+    trap 'rmdir "$LOCKFILE" 2>/dev/null' EXIT INT TERM
 
     # Collect dendrites for the full gap
     export SINCE="${LAST_ROLLUP_DATE}"
@@ -235,7 +248,7 @@ Produce a catch-up rollup. This is NOT a normal daily rollup — the developer h
 
 Tone: 'Welcome back. Here's what happened while you were gone.'
 
-IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary." | claude -p --output-format json 2>/dev/null)
+IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary." | claude -p --output-format json --allowedTools "Read,Glob,Grep" 2>/dev/null)
 
     CATCHUP_TEXT=$(echo "$CATCHUP_RESULT" | jq -r '.result' 2>/dev/null)
 
@@ -255,13 +268,22 @@ $CATCHUP_TEXT
 ## Task
 Regenerate state.md. Keep under 2000 tokens. Update all sections to reflect current reality after the gap. Add YAML frontmatter with last_rollup: $TODAY
 
-IMPORTANT: Output ONLY the state.md content. No preamble, no meta-commentary." | claude -p --output-format json 2>/dev/null | jq -r '.result' 2>/dev/null)
+IMPORTANT: Output ONLY the state.md content. No preamble, no meta-commentary." | claude -p --output-format json --allowedTools "Read,Glob,Grep" 2>/dev/null | jq -r '.result' 2>/dev/null)
 
         if [[ -n "$NEW_STATE" ]] && [[ "$NEW_STATE" != "null" ]]; then
-            echo "$NEW_STATE" > "$WORKSPACE/state.md"
-            echo "  ✓ State updated"
+            cp "$WORKSPACE/state.md" "$WORKSPACE/state.md.backup"
+            TMPSTATE=$(mktemp "$WORKSPACE/.state.tmp.XXXXXX")
+            echo "$NEW_STATE" > "$TMPSTATE" && mv "$TMPSTATE" "$WORKSPACE/state.md"
+            echo "  ✓ State updated (atomic write)"
         fi
+
+        # Update .last-collection after successful catch-up
+        date -u +"%Y-%m-%dT%H:%M:%SZ" > "$WORKSPACE/dendrites/.last-collection"
     fi
+
+    # Release lockfile (trap will also clean up)
+    rmdir "$LOCKFILE" 2>/dev/null || true
+    fi  # end of DAYS_AWAY > 1 inner guard
 
     GAP_CONTEXT="The developer was away for $DAYS_AWAY days. A catch-up rollup was just generated. Frame the briefing as a 'welcome back' — summarize the catch-up, then suggest where to re-enter."
     echo ""

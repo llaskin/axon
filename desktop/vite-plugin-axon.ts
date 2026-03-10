@@ -93,6 +93,19 @@ export function axonDevApi(): Plugin {
             return
           }
 
+          // GET /api/axon/projects/:name/config
+          const configMatch = req.url.match(/^\/api\/axon\/projects\/([^/]+)\/config$/)
+          if (configMatch) {
+            const project = decodeURIComponent(configMatch[1])
+            try {
+              const content = await readFile(join(AXON_HOME, 'workspaces', project, 'config.yaml'), 'utf-8')
+              res.end(JSON.stringify({ content }))
+            } catch {
+              res.end(JSON.stringify({ content: '' }))
+            }
+            return
+          }
+
           // GET /api/axon/projects/:name/stream
           const streamMatch = req.url.match(/^\/api\/axon\/projects\/([^/]+)\/stream$/)
           if (streamMatch) {

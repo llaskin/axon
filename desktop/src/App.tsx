@@ -3,6 +3,7 @@ import { Shell } from '@/components/layout/Shell'
 import { TimelineView } from '@/views/TimelineView'
 import { RollupDetailView } from '@/views/RollupDetailView'
 import { StateView } from '@/views/StateView'
+import { SettingsView } from '@/views/SettingsView'
 import { useUIStore } from '@/store/uiStore'
 
 function ViewRouter() {
@@ -21,10 +22,7 @@ function ViewRouter() {
         <p className="text-body text-ax-text-tertiary">Coming soon — searchable decision trace explorer</p>
       </div>
     case 'settings':
-      return <div className="text-center py-20">
-        <p className="font-serif italic text-h3 text-ax-text-tertiary mb-2">Settings</p>
-        <p className="text-body text-ax-text-tertiary">Coming soon — project management, cron toggles, dendrite config</p>
-      </div>
+      return <SettingsView />
     default:
       return <TimelineView />
   }

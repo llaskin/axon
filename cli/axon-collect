@@ -16,6 +16,30 @@ NOW=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
 
 mkdir -p "$DENDRITE_DIR"
 
+# Read project config for dendrite settings
+CONFIG_FILE="$WORKSPACE/config.yaml"
+dendrite_enabled() {
+    local dtype="$1"
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        # No config — enable all by default
+        return 0
+    fi
+    # Check for "dtype:\n    enabled: false" pattern
+    local enabled
+    enabled=$(awk "/^  ${dtype}:/{found=1} found && /enabled:/{print \$2; exit}" "$CONFIG_FILE" 2>/dev/null)
+    if [[ "$enabled" == "false" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Read max_commits from config (default 200)
+MAX_COMMITS=200
+if [[ -f "$CONFIG_FILE" ]]; then
+    _mc=$(awk '/max_commits:/{print $2}' "$CONFIG_FILE" 2>/dev/null)
+    [[ -n "$_mc" ]] && [[ "$_mc" =~ ^[0-9]+$ ]] && MAX_COMMITS="$_mc"
+fi
+
 # Determine time window
 if [[ -n "${SINCE:-}" ]]; then
     GIT_SINCE="$SINCE"
@@ -30,8 +54,10 @@ echo "  Path: $PROJECT_PATH"
 echo "  Since: $GIT_SINCE"
 
 # --- GIT-LOG DENDRITE ---
-if git -C "$PROJECT_PATH" rev-parse --git-dir > /dev/null 2>&1; then
-    COMMIT_COUNT=$(git -C "$PROJECT_PATH" log --since="$GIT_SINCE" --oneline 2>/dev/null | wc -l | tr -d ' ')
+if ! dendrite_enabled "git-log"; then
+    echo "  · git-log: disabled in config"
+elif git -C "$PROJECT_PATH" rev-parse --git-dir > /dev/null 2>&1; then
+    COMMIT_COUNT=$(git -C "$PROJECT_PATH" log --since="$GIT_SINCE" --oneline -"$MAX_COMMITS" 2>/dev/null | wc -l | tr -d ' ')
 
     if [[ "$COMMIT_COUNT" -gt 0 ]]; then
         OUTFILE="$DENDRITE_DIR/${NOW}_git-log.md"
@@ -82,7 +108,9 @@ else
 fi
 
 # --- FILE-TREE DENDRITE ---
-if git -C "$PROJECT_PATH" rev-parse --git-dir > /dev/null 2>&1; then
+if ! dendrite_enabled "file-tree"; then
+    echo "  · file-tree: disabled in config"
+elif git -C "$PROJECT_PATH" rev-parse --git-dir > /dev/null 2>&1; then
     OUTFILE="$DENDRITE_DIR/${NOW}_file-tree.md"
     TREE_HASH=$(git -C "$PROJECT_PATH" ls-files | shasum -a 256 | awk '{print $1}')
     FILE_COUNT=$(git -C "$PROJECT_PATH" ls-files | wc -l | tr -d ' ')
@@ -125,7 +153,9 @@ else
 fi
 
 # --- STREAM DENDRITE (from axon log notes) ---
-if [[ -f "$WORKSPACE/stream.md" ]]; then
+if ! dendrite_enabled "manual-note"; then
+    echo "  · stream: disabled in config"
+elif [[ -f "$WORKSPACE/stream.md" ]]; then
     # Determine cutoff timestamp for filtering
     if [[ -f "$LAST_FILE" ]]; then
         CUTOFF=$(cat "$LAST_FILE")

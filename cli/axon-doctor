@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# axon-doctor — Health check for the Axon system
+# Usage: axon doctor
+
+# Don't exit on check failures — we want to run all checks
+set -uo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+PASS=0
+WARN=0
+FAIL=0
+
+pass() {
+    printf "  ${GREEN}✓${RESET}  %s\n" "$1"
+    ((PASS++))
+}
+
+warn() {
+    printf "  ${YELLOW}⚠${RESET}  %s\n" "$1"
+    ((WARN++))
+}
+
+fail() {
+    printf "  ${RED}✗${RESET}  %s\n" "$1"
+    ((FAIL++))
+}
+
+info() {
+    printf "  ${DIM}·${RESET}  %s\n" "$1"
+}
+
+echo ""
+printf "${BOLD}=== Axon Doctor ===${RESET}\n"
+echo ""
+
+# ─── 1. Config check ────────────────────────────────────────────────
+printf "${BOLD}Config${RESET}\n"
+
+if [[ -d "$AXON_HOME" ]]; then
+    pass "Axon home exists ($AXON_HOME)"
+else
+    fail "Axon home not found ($AXON_HOME)"
+fi
+
+PROJECTS=()
+if [[ -d "$AXON_HOME/workspaces" ]]; then
+    for ws in "$AXON_HOME/workspaces"/*/; do
+        [[ ! -d "$ws" ]] && continue
+        name=$(basename "$ws")
+        config="$ws/config.yaml"
+        if [[ -f "$config" ]]; then
+            # Basic YAML validity: check it has expected keys
+            if grep -q "^project:" "$config" 2>/dev/null; then
+                pass "Config valid: $name"
+                PROJECTS+=("$name")
+            else
+                warn "Config missing 'project:' key: $name"
+                PROJECTS+=("$name")
+            fi
+        else
+            warn "No config.yaml for workspace: $name"
+            PROJECTS+=("$name")
+        fi
+    done
+else
+    fail "No workspaces directory found"
+fi
+
+if [[ ${#PROJECTS[@]} -eq 0 ]]; then
+    warn "No projects found"
+fi
+
+echo ""
+
+# ─── 2. Workspace check ─────────────────────────────────────────────
+printf "${BOLD}Workspaces${RESET}\n"
+
+for project in "${PROJECTS[@]}"; do
+    ws="$AXON_HOME/workspaces/$project"
+    missing=()
+    [[ ! -d "$ws/episodes" ]] && missing+=("episodes/")
+    [[ ! -d "$ws/dendrites" ]] && missing+=("dendrites/")
+    [[ ! -d "$ws/mornings" ]] && missing+=("mornings/")
+    [[ ! -f "$ws/stream.md" ]] && missing+=("stream.md")
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        pass "Workspace complete: $project"
+    else
+        warn "Workspace $project missing: ${missing[*]}"
+    fi
+done
+
+echo ""
+
+# ─── 3. Cron check ──────────────────────────────────────────────────
+printf "${BOLD}Scheduling${RESET}\n"
+
+if [[ "$(uname)" == "Darwin" ]]; then
+    PLIST_DIR="$HOME/Library/LaunchAgents"
+    FOUND_CRON=0
+    for project in "${PROJECTS[@]}"; do
+        label="com.axon.rollup.${project}"
+        plist="$PLIST_DIR/$label.plist"
+        if [[ -f "$plist" ]]; then
+            if launchctl list "$label" &>/dev/null; then
+                pass "Cron active: $project (launchd)"
+            else
+                warn "Cron plist exists but not loaded: $project"
+            fi
+            ((FOUND_CRON++))
+        fi
+    done
+    if [[ "$FOUND_CRON" -eq 0 ]]; then
+        warn "No launchd schedules found for any project"
+    fi
+else
+    if crontab -l 2>/dev/null | grep -q "axon"; then
+        CRON_LINES=$(crontab -l 2>/dev/null | grep "axon" | wc -l | tr -d ' ')
+        pass "Cron jobs found: $CRON_LINES axon entries"
+    else
+        warn "No axon cron jobs found"
+    fi
+fi
+
+echo ""
+
+# ─── 4. Rollup freshness ────────────────────────────────────────────
+printf "${BOLD}Rollup Freshness${RESET}\n"
+
+NOW_EPOCH=$(date +%s)
+
+for project in "${PROJECTS[@]}"; do
+    ws="$AXON_HOME/workspaces/$project"
+    episodes_dir="$ws/episodes"
+
+    if [[ ! -d "$episodes_dir" ]]; then
+        fail "No episodes directory: $project"
+        continue
+    fi
+
+    # Find the latest rollup file (sort by name, which is date-based)
+    latest=$(find "$episodes_dir" -name "*.md" -print 2>/dev/null | sort -r | head -1)
+
+    if [[ -z "$latest" ]]; then
+        fail "No rollups found: $project"
+        continue
+    fi
+
+    latest_name=$(basename "$latest")
+
+    # Get file modification time
+    if [[ "$(uname)" == "Darwin" ]]; then
+        file_epoch=$(stat -f %m "$latest" 2>/dev/null || echo "0")
+    else
+        file_epoch=$(stat -c %Y "$latest" 2>/dev/null || echo "0")
+    fi
+
+    age_seconds=$((NOW_EPOCH - file_epoch))
+    age_hours=$((age_seconds / 3600))
+    age_days=$((age_seconds / 86400))
+
+    if [[ "$age_seconds" -gt 259200 ]]; then
+        # > 3 days
+        fail "Rollup stale: $project — last rollup ${age_days}d ago ($latest_name)"
+    elif [[ "$age_seconds" -gt 86400 ]]; then
+        # > 24 hours
+        warn "Rollup aging: $project — last rollup ${age_hours}h ago ($latest_name)"
+    else
+        pass "Rollup fresh: $project — ${age_hours}h ago ($latest_name)"
+    fi
+done
+
+echo ""
+
+# ─── 5. State file check ────────────────────────────────────────────
+printf "${BOLD}State Files${RESET}\n"
+
+for project in "${PROJECTS[@]}"; do
+    ws="$AXON_HOME/workspaces/$project"
+    state="$ws/state.md"
+
+    if [[ -f "$state" ]]; then
+        # Check it has content (not empty)
+        lines=$(wc -l < "$state" | tr -d ' ')
+        if [[ "$lines" -gt 3 ]]; then
+            pass "State file OK: $project ($lines lines)"
+        else
+            warn "State file nearly empty: $project ($lines lines)"
+        fi
+    else
+        fail "No state.md: $project"
+    fi
+done
+
+echo ""
+
+# ─── 6. Lock check ──────────────────────────────────────────────────
+printf "${BOLD}Locks${RESET}\n"
+
+STALE_LOCKS=0
+for project in "${PROJECTS[@]}"; do
+    ws="$AXON_HOME/workspaces/$project"
+    lockfile="$ws/.rollup.lock"
+
+    if [[ -d "$lockfile" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            lock_epoch=$(stat -f %m "$lockfile" 2>/dev/null || echo "0")
+        else
+            lock_epoch=$(stat -c %Y "$lockfile" 2>/dev/null || echo "0")
+        fi
+        lock_age=$((NOW_EPOCH - lock_epoch))
+
+        if [[ "$lock_age" -gt 1800 ]]; then
+            fail "Stale lock: $project (${lock_age}s old) — remove with: rmdir $lockfile"
+            ((STALE_LOCKS++))
+        else
+            warn "Active lock: $project (${lock_age}s old, rollup may be running)"
+        fi
+    fi
+done
+
+if [[ "$STALE_LOCKS" -eq 0 ]]; then
+    pass "No stale locks"
+fi
+
+echo ""
+
+# ─── 7. Claude check ────────────────────────────────────────────────
+printf "${BOLD}Dependencies${RESET}\n"
+
+if command -v claude &>/dev/null; then
+    claude_version=$(claude --version 2>/dev/null | head -1)
+    pass "claude CLI available ($claude_version)"
+else
+    fail "claude CLI not found (install: https://claude.ai/code)"
+fi
+
+if command -v jq &>/dev/null; then
+    pass "jq available"
+else
+    fail "jq not found (install: brew install jq)"
+fi
+
+if command -v git &>/dev/null; then
+    pass "git available"
+else
+    fail "git not found"
+fi
+
+echo ""
+
+# ─── 8. Disk usage ──────────────────────────────────────────────────
+printf "${BOLD}Disk Usage${RESET}\n"
+
+if [[ -d "$AXON_HOME" ]]; then
+    total_size=$(du -sh "$AXON_HOME" 2>/dev/null | awk '{print $1}')
+    info "Total: $AXON_HOME → $total_size"
+
+    for project in "${PROJECTS[@]}"; do
+        ws="$AXON_HOME/workspaces/$project"
+        if [[ -d "$ws" ]]; then
+            proj_size=$(du -sh "$ws" 2>/dev/null | awk '{print $1}')
+            info "  $project → $proj_size"
+        fi
+    done
+fi
+
+echo ""
+
+# ─── Summary ─────────────────────────────────────────────────────────
+printf "${BOLD}─── Summary ───${RESET}\n"
+
+if [[ "$FAIL" -gt 0 ]]; then
+    printf "  ${GREEN}$PASS passed${RESET}  ${YELLOW}$WARN warnings${RESET}  ${RED}$FAIL failed${RESET}\n"
+    echo ""
+    exit 1
+elif [[ "$WARN" -gt 0 ]]; then
+    printf "  ${GREEN}$PASS passed${RESET}  ${YELLOW}$WARN warnings${RESET}  ${RED}$FAIL failed${RESET}\n"
+    echo ""
+    exit 0
+else
+    printf "  ${GREEN}$PASS passed${RESET} — all clear\n"
+    echo ""
+    exit 0
+fi

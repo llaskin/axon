@@ -1,10 +1,12 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useProjectStore } from '@/store/projectStore'
 import { useRollups } from '@/hooks/useRollups'
 import { useUIStore } from '@/store/uiStore'
-import { parseDecisionTraces } from '@/lib/parser'
+import { parseFrontmatter, parseDecisionTraces } from '@/lib/parser'
 import { formatDate } from '@/lib/utils'
-import { Search } from 'lucide-react'
+import { Search, Globe, FolderOpen } from 'lucide-react'
+import type { RollupEpisode, RollupFrontmatter } from '@/lib/types'
+import { extractSummary } from '@/lib/parser'
 
 interface DecisionWithContext {
   id: string
@@ -16,18 +18,79 @@ interface DecisionWithContext {
   rollupDate: string
   rollupFilename: string
   rollupHeadline: string
+  projectName: string
+}
+
+/** Fetch rollups for all projects */
+function useAllProjectRollups(enabled: boolean) {
+  const projects = useProjectStore((s) => s.projects)
+  const [allRollups, setAllRollups] = useState<(RollupEpisode & { projectName: string })[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!enabled || projects.length === 0) {
+      setAllRollups([])
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    Promise.all(
+      projects.map(p =>
+        fetch(`/api/axon/projects/${encodeURIComponent(p.name)}/rollups`)
+          .then(r => r.ok ? r.json() : [])
+          .then((raw: Array<{ filename: string; content: string }>) =>
+            raw.map(r => {
+              const result = parseFrontmatter<RollupFrontmatter>(r.content)
+              const ep: RollupEpisode & { projectName: string } = result.ok && result.data ? {
+                filename: r.filename,
+                frontmatter: { ...{ type: 'rollup' as const, date: '', project: p.name }, ...result.data.frontmatter },
+                summary: extractSummary(result.data.body),
+                body: result.data.body,
+                projectName: p.name,
+              } : {
+                filename: r.filename,
+                frontmatter: { type: 'rollup' as const, date: '', project: p.name },
+                summary: '',
+                body: r.content,
+                projectName: p.name,
+              }
+              return ep
+            })
+          )
+          .catch(() => [] as (RollupEpisode & { projectName: string })[])
+      )
+    ).then(results => {
+      setAllRollups(results.flat())
+      setLoading(false)
+    }).catch(e => {
+      setError(e instanceof Error ? e.message : 'Failed to load cross-project rollups')
+      setLoading(false)
+    })
+  }, [enabled, projects])
+
+  return { allRollups, loading, error }
 }
 
 export function DecisionsView() {
   const activeProject = useProjectStore((s) => s.activeProject)
+  const projects = useProjectStore((s) => s.projects)
   const openRollup = useUIStore((s) => s.openRollup)
   const { rollups, loading, error } = useRollups(activeProject)
   const [search, setSearch] = useState('')
+  const [crossProject, setCrossProject] = useState(false)
 
-  // Extract all decisions from all rollups
+  const { allRollups, loading: crossLoading, error: crossError } = useAllProjectRollups(crossProject)
+
+  // Extract all decisions from rollups (current project or all projects)
   const allDecisions = useMemo(() => {
     const decisions: DecisionWithContext[] = []
-    for (const rollup of rollups) {
+    const sourceRollups = crossProject
+      ? allRollups
+      : rollups.map(r => ({ ...r, projectName: activeProject || '' }))
+    for (const rollup of sourceRollups) {
       const traces = parseDecisionTraces(rollup.body)
       for (const dt of traces) {
         decisions.push({
@@ -35,11 +98,12 @@ export function DecisionsView() {
           rollupDate: rollup.frontmatter.date || '',
           rollupFilename: rollup.filename,
           rollupHeadline: rollup.frontmatter.headline || rollup.filename,
+          projectName: rollup.projectName,
         })
       }
     }
     return decisions
-  }, [rollups])
+  }, [rollups, allRollups, crossProject, activeProject])
 
   // Filter by search
   const filtered = useMemo(() => {
@@ -67,7 +131,10 @@ export function DecisionsView() {
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
   }, [filtered])
 
-  if (loading) {
+  const isLoading = crossProject ? crossLoading : loading
+  const currentError = crossProject ? crossError : error
+
+  if (isLoading) {
     return (
       <div className="space-y-4 animate-pulse">
         <div className="h-8 bg-ax-sunken rounded w-48" />
@@ -84,24 +151,50 @@ export function DecisionsView() {
   return (
     <div>
       <header className="mb-8">
-        <h1 className="font-serif italic text-display text-ax-text-primary tracking-tight">
-          Decisions
-        </h1>
-        <p className="text-body text-ax-text-secondary mt-2">
-          {activeProject ? (
-            <>
-              <span className="font-mono">{allDecisions.length}</span> decision traces across{' '}
-              <span className="font-mono">{rollups.length}</span> rollups
-            </>
-          ) : (
-            'Select a project to explore decisions'
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="font-serif italic text-display text-ax-text-primary tracking-tight">
+              Decisions
+            </h1>
+            <p className="text-body text-ax-text-secondary mt-2">
+              {crossProject ? (
+                <>
+                  <span className="font-mono">{allDecisions.length}</span> decision traces across{' '}
+                  <span className="font-mono">{projects.length}</span> projects
+                </>
+              ) : activeProject ? (
+                <>
+                  <span className="font-mono">{allDecisions.length}</span> decision traces across{' '}
+                  <span className="font-mono">{rollups.length}</span> rollups
+                </>
+              ) : (
+                'Select a project to explore decisions'
+              )}
+            </p>
+          </div>
+
+          {/* Cross-project toggle */}
+          {projects.length > 1 && (
+            <button
+              onClick={() => setCrossProject(v => !v)}
+              aria-label={crossProject ? 'Show current project only' : 'Search across all projects'}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-small font-mono transition-all
+                focus:outline-none focus-visible:ring-2 focus-visible:ring-ax-brand
+                ${crossProject
+                  ? 'bg-ax-brand-subtle text-ax-brand border border-ax-brand/30'
+                  : 'bg-ax-sunken text-ax-text-tertiary hover:text-ax-text-secondary border border-ax-border-subtle'
+                }`}
+            >
+              {crossProject ? <Globe size={14} /> : <FolderOpen size={14} />}
+              {crossProject ? 'All projects' : 'This project'}
+            </button>
           )}
-        </p>
+        </div>
       </header>
 
-      {error && (
+      {currentError && (
         <div className="bg-ax-error-subtle border border-ax-error/20 rounded-xl p-5 mb-6">
-          <p className="text-body text-ax-error">{error}</p>
+          <p className="text-body text-ax-error">{currentError}</p>
         </div>
       )}
 
@@ -171,11 +264,16 @@ export function DecisionsView() {
                   key={`${dt.rollupFilename}-${dt.id}`}
                   className="bg-ax-elevated rounded-xl border border-ax-border p-5 hover:border-ax-border-strong transition-colors"
                 >
-                  <div className="flex items-baseline gap-2 mb-3">
+                  <div className="flex items-baseline gap-2 mb-3 flex-wrap">
                     <span className="font-mono text-micro text-ax-brand font-medium px-1.5 py-0.5 bg-ax-brand-subtle rounded">
                       {dt.id}
                     </span>
                     <h3 className="font-serif text-h4 text-ax-text-primary">{dt.title}</h3>
+                    {crossProject && (
+                      <span className="font-mono text-micro text-ax-text-tertiary px-1.5 py-0.5 bg-ax-sunken rounded ml-auto">
+                        {dt.projectName}
+                      </span>
+                    )}
                   </div>
 
                   {/* Compact view — show decision first, then expandable details */}

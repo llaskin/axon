@@ -38,6 +38,7 @@ Commands:
   status    Show current project state
   sync      Push/pull Axon memory to/from remote
   cron      Install/remove nightly rollup schedule
+  doctor    Run health checks on the Axon system
 
 Options:
   --project NAME    Project name (default: current directory name)
@@ -125,6 +126,7 @@ case "$COMMAND" in
     status)   exec "$SCRIPT_DIR/axon-status" ;;
     sync)     exec "$SCRIPT_DIR/axon-sync" ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"} ;;
     cron)     exec "$SCRIPT_DIR/axon-cron" ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"} ;;
+    doctor)   exec "$SCRIPT_DIR/axon-doctor" ;;
     --version|-v) echo "axon v0.1.0 (poc)"; exit 0 ;;
     *)        usage ;;
 esac

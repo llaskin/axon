@@ -25,7 +25,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
           onClick={() => setView('timeline')}
           aria-label="Go to timeline"
         >
-          <img src="/branding/axon-mark-dark.png" alt="" className="w-7 h-7 rounded" aria-hidden="true" />
+          <img src="/branding/axon-mark-light.png" alt="" className="w-7 h-7 rounded" aria-hidden="true" />
           <span className="font-serif italic text-h2 text-[var(--ax-text-on-dark)] tracking-tight">axon</span>
         </button>
       </div>

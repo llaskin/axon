@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Terminal, Send, Square, Clock, RotateCcw, Shield, ChevronDown } from 'lucide-react'
 import { useProjectStore } from '@/store/projectStore'
 import { useAgentSession } from './agent/useAgentSession'
 import { AgentTimeline } from './agent/AgentTimeline'
 import { FileTree } from './agent/FileTree'
+import { FileAutocomplete } from './agent/FileAutocomplete'
+import { useFileSearch } from './agent/useFileSearch'
 import type { AgentStatus } from './agent/types'
 
 const STATUS_DOT: Record<AgentStatus, string> = {
@@ -26,13 +28,33 @@ const ALL_TOOLS = [
 
 const DEFAULT_TOOLS = ALL_TOOLS.map(t => t.name)
 
+/* ── Extract @query from cursor position ────────────────────────── */
+
+function extractAtQuery(text: string, cursorPos: number): string | null {
+  // Walk backwards from cursor to find @
+  const before = text.slice(0, cursorPos)
+  const atIdx = before.lastIndexOf('@')
+  if (atIdx === -1) return null
+  // Must be at start or preceded by whitespace
+  if (atIdx > 0 && !/\s/.test(before[atIdx - 1])) return null
+  const query = before.slice(atIdx + 1)
+  // No spaces allowed in the query
+  if (/\s/.test(query)) return null
+  return query
+}
+
 export function AgentView() {
   const activeProject = useProjectStore((s) => s.activeProject)
   const [prompt, setPrompt] = useState('')
   const [allowedTools, setAllowedTools] = useState<string[]>([...DEFAULT_TOOLS])
   const [showPerms, setShowPerms] = useState(false)
+  const [acQuery, setAcQuery] = useState<string | null>(null)
+  const [acSelected, setAcSelected] = useState(0)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { events, status, elapsed, error, sessionId, send, stop, reset } = useAgentSession()
+
+  // File search for autocomplete
+  const { results: acResults, loading: acLoading } = useFileSearch(acQuery || '', activeProject)
 
   // Focus input when status returns to idle/complete
   useEffect(() => {
@@ -41,13 +63,88 @@ export function AgentView() {
     }
   }, [status])
 
+  // Reset autocomplete selection when results change
+  useEffect(() => { setAcSelected(0) }, [acResults])
+
+  // Update @-query detection on prompt change
+  const handlePromptChange = useCallback((value: string) => {
+    setPrompt(value)
+    const textarea = inputRef.current
+    if (!textarea) return
+    const query = extractAtQuery(value, textarea.selectionStart)
+    setAcQuery(query)
+  }, [])
+
+  // Insert a file reference at the cursor
+  const insertFileRef = useCallback((path: string) => {
+    const textarea = inputRef.current
+    if (!textarea) return
+    const cursorPos = textarea.selectionStart
+    const before = prompt.slice(0, cursorPos)
+    const after = prompt.slice(cursorPos)
+    // Find the @ that triggered this
+    const atIdx = before.lastIndexOf('@')
+    if (atIdx === -1) return
+    const newPrompt = before.slice(0, atIdx) + `@${path} ` + after
+    setPrompt(newPrompt)
+    setAcQuery(null)
+    // Set cursor after the inserted reference
+    const newPos = atIdx + path.length + 2 // @path + space
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(newPos, newPos)
+    })
+  }, [prompt])
+
+  // Handle file reference from file tree @ button
+  const handleFileReference = useCallback((path: string) => {
+    const ref = `@${path} `
+    setPrompt(prev => prev + ref)
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      const len = (prompt + ref).length
+      inputRef.current?.setSelectionRange(len, len)
+    })
+  }, [prompt])
+
   const handleSubmit = () => {
     if (!prompt.trim() || !activeProject || status === 'running') return
     send(prompt.trim(), activeProject, allowedTools)
     setPrompt('')
+    setAcQuery(null)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Autocomplete keyboard handling
+    if (acQuery !== null && acResults.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setAcSelected(p => (p + 1) % acResults.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setAcSelected(p => (p - 1 + acResults.length) % acResults.length)
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        if (acResults[acSelected]) insertFileRef(acResults[acSelected])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setAcQuery(null)
+        return
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        if (acResults[acSelected]) insertFileRef(acResults[acSelected])
+        return
+      }
+    }
+
+    // Normal Enter to send
     if (e.key === 'Enter') {
       if (e.shiftKey || e.metaKey || e.ctrlKey) return
       e.preventDefault()
@@ -61,12 +158,14 @@ export function AgentView() {
     )
   }
 
+  const showAutocomplete = acQuery !== null && acQuery.length >= 0 && acResults.length > 0
+
   return (
     <div className="flex h-full">
       {/* File tree sidebar — opaque, flush, VS Code style */}
       {activeProject && (
         <div className="w-56 shrink-0 border-r border-ax-border bg-ax-elevated overflow-hidden">
-          <FileTree project={activeProject} />
+          <FileTree project={activeProject} onFileReference={handleFileReference} />
         </div>
       )}
 
@@ -146,7 +245,7 @@ export function AgentView() {
               <Terminal size={20} className="text-ax-text-ghost mx-auto mb-2" />
               <p className="text-micro text-ax-text-tertiary max-w-xs">
                 {activeProject
-                  ? 'Type a prompt below to start.'
+                  ? 'Type a prompt below to start. Use @filename to reference files.'
                   : 'Select a project in the sidebar first.'}
               </p>
             </div>
@@ -161,18 +260,38 @@ export function AgentView() {
         )}
 
         {/* Chat input at bottom */}
-        <div className="shrink-0 border-t border-ax-border-subtle px-3 pt-2 pb-1.5">
+        <div className="shrink-0 relative border-t border-ax-border-subtle px-3 pt-2 pb-1.5">
+          {/* File autocomplete dropdown */}
+          {showAutocomplete && activeProject && (
+            <FileAutocomplete
+              results={acResults}
+              loading={acLoading}
+              query={acQuery!}
+              selected={acSelected}
+              onSelect={insertFileRef}
+              onHover={setAcSelected}
+              onClose={() => setAcQuery(null)}
+            />
+          )}
+
           <div className="flex gap-2 items-end">
             <textarea
               ref={inputRef}
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => handlePromptChange(e.target.value)}
               onKeyDown={handleKeyDown}
+              onClick={() => {
+                // Re-check @-query on click (cursor may have moved)
+                const textarea = inputRef.current
+                if (textarea) {
+                  setAcQuery(extractAtQuery(prompt, textarea.selectionStart))
+                }
+              }}
               placeholder={
                 !activeProject ? 'Select a project first...'
                 : status === 'running' ? 'Waiting for agent...'
                 : sessionId ? 'Follow-up message...'
-                : 'What should the agent do?'
+                : 'What should the agent do? Use @ to reference files'
               }
               disabled={!activeProject || status === 'running'}
               rows={1}
@@ -211,7 +330,7 @@ export function AgentView() {
               </button>
             )}
           </div>
-          <span className="text-[9px] text-ax-text-tertiary px-1 mt-0.5 block">Enter to send · Shift+Enter for newline</span>
+          <span className="text-[9px] text-ax-text-tertiary px-1 mt-0.5 block">Enter to send · Shift+Enter for newline · @ to reference files</span>
         </div>
       </div>
     </div>

@@ -50,7 +50,6 @@ export function TextCard({ event }: { event: AgentEvent }) {
 
 export function ThinkingCard({ event }: { event: AgentEvent }) {
   const [open, setOpen] = useState(false)
-  const preview = event.text?.slice(0, 80) || ''
   return (
     <button
       onClick={() => setOpen(!open)}
@@ -58,11 +57,22 @@ export function ThinkingCard({ event }: { event: AgentEvent }) {
     >
       <div className="flex items-center gap-1.5">
         <Brain size={9} className="text-ax-text-tertiary shrink-0" />
-        <span className="font-mono text-[10px] text-ax-text-tertiary truncate flex-1">
-          {open ? 'thinking' : preview || 'thinking…'}
+        <span className="font-mono text-[10px] text-ax-text-tertiary">
+          thinking
         </span>
         {open ? <ChevronDown size={9} className="text-ax-text-tertiary" /> : <ChevronRight size={9} className="text-ax-text-tertiary" />}
       </div>
+      {/* Collapsed: single-line preview with gradient fade */}
+      {!open && event.text && (
+        <div className="relative mt-0.5 h-[16px] overflow-hidden">
+          <span className="font-mono text-[10px] text-ax-text-ghost whitespace-nowrap">
+            {event.text.replace(/\n/g, ' ')}
+          </span>
+          <div className="absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-ax-base to-transparent
+            group-hover:from-ax-sunken/30" />
+        </div>
+      )}
+      {/* Expanded: full text */}
       {open && (
         <div className="mt-1 text-[11px] text-ax-text-tertiary leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
           {event.text}

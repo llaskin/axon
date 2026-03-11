@@ -413,6 +413,40 @@ export function axonDevApi(): Plugin {
             return
           }
 
+          // GET /api/axon/filesearch?project=name&q=query — search files for @-autocomplete
+          const filesearchMatch = req.url?.match(/^\/api\/axon\/filesearch\?project=([^&]+)&q=(.*)$/)
+          if (filesearchMatch) {
+            const project = decodeURIComponent(filesearchMatch[1])
+            const query = decodeURIComponent(filesearchMatch[2]).toLowerCase()
+
+            let root = process.cwd()
+            try {
+              const cfg = await readFile(
+                join(AXON_HOME, 'workspaces', project, 'config.yaml'), 'utf-8'
+              )
+              const pp = cfg.match(/^project_path:\s*(.+)$/m)?.[1]?.trim()
+              if (pp && existsSync(pp)) root = pp
+            } catch { /* fallback */ }
+
+            try {
+              // Use git ls-files -co: tracked + untracked, minus gitignored
+              const raw = execSync(`git -C "${root}" ls-files -co --exclude-standard 2>/dev/null`, {
+                encoding: 'utf-8', maxBuffer: 1024 * 1024 * 5,
+              })
+              const allFiles = raw.split('\n').filter(Boolean)
+              // Filter by query (match on filename or full path)
+              const matches = query
+                ? allFiles.filter(f => f.toLowerCase().includes(query)).slice(0, 50)
+                : allFiles.slice(0, 50)
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ files: matches }))
+            } catch {
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ files: [] }))
+            }
+            return
+          }
+
           // GET /api/axon/filetree?project=name — shallow directory listing for agent sidebar
           const filetreeMatch = req.url?.match(/^\/api\/axon\/filetree\?project=([^&]+)(?:&path=(.*))?$/)
           if (filetreeMatch) {

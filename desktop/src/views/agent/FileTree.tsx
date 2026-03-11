@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { ChevronRight, ChevronDown, RefreshCw, GitBranch } from 'lucide-react'
+import { ChevronRight, ChevronDown, RefreshCw, GitBranch, AtSign } from 'lucide-react'
+import { getFileIcon } from './fileIcons'
 
 interface FileEntry {
   name: string
@@ -30,38 +31,6 @@ const GIT_LABEL: Record<GitStatus, string> = {
 }
 const GIT_GROUP_LABEL: Record<GitStatus, string> = {
   M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', U: 'Untracked',
-}
-
-/* ── File type badges (colored 2-char, the good ones) ─────────── */
-
-const EXT_ICON: Record<string, { color: string; label: string }> = {
-  ts:    { color: '#3178C6', label: 'TS' },
-  tsx:   { color: '#3178C6', label: 'TX' },
-  js:    { color: '#F7DF1E', label: 'JS' },
-  jsx:   { color: '#F7DF1E', label: 'JX' },
-  json:  { color: '#A8A8A8', label: '{}' },
-  css:   { color: '#563D7C', label: 'CS' },
-  scss:  { color: '#CD6799', label: 'SC' },
-  html:  { color: '#E34C26', label: '<>' },
-  md:    { color: '#519ABA', label: 'MD' },
-  yml:   { color: '#CB171E', label: 'YL' },
-  yaml:  { color: '#CB171E', label: 'YL' },
-  toml:  { color: '#9C4221', label: 'TM' },
-  py:    { color: '#3776AB', label: 'PY' },
-  rs:    { color: '#DEA584', label: 'RS' },
-  sh:    { color: '#89E051', label: 'SH' },
-  svg:   { color: '#FFB13B', label: 'SV' },
-  png:   { color: '#A074C4', label: 'PN' },
-  jpg:   { color: '#A074C4', label: 'JP' },
-  lock:  { color: '#6B6B6B', label: 'LK' },
-  gitignore: { color: '#F05032', label: 'GI' },
-}
-
-function getFileIcon(name: string) {
-  const stripped = name.startsWith('.') ? name.slice(1).toLowerCase() : ''
-  if (stripped && EXT_ICON[stripped]) return EXT_ICON[stripped]
-  const ext = name.split('.').pop()?.toLowerCase() || ''
-  return EXT_ICON[ext] || null
 }
 
 /* ── Folder icon (SVG) ────────────────────────────────────────── */
@@ -100,7 +69,7 @@ function buildDirChangeMap(gitFiles: GitMap): Map<string, GitStatus> {
 
 /* ── FileTree root ────────────────────────────────────────────── */
 
-export function FileTree({ project }: { project: string }) {
+export function FileTree({ project, onFileReference }: { project: string; onFileReference?: (path: string) => void }) {
   const [tree, setTree] = useState<Map<string, DirNode>>(new Map())
   const [root, setRoot] = useState('')
   const [gitFiles, setGitFiles] = useState<GitMap>({})
@@ -225,7 +194,8 @@ export function FileTree({ project }: { project: string }) {
         {rootNode?.open ? (
           rootNode.entries.length > 0 ? (
             <DirEntries entries={rootNode.entries} tree={tree} toggle={toggle} depth={0}
-              gitFiles={showGit ? gitFiles : {}} dirChangeMap={showGit ? dirChangeMap : null} />
+              gitFiles={showGit ? gitFiles : {}} dirChangeMap={showGit ? dirChangeMap : null}
+              onFileReference={onFileReference} />
           ) : (
             <div className="px-4 py-3 text-[11px] text-ax-text-ghost italic">Empty directory</div>
           )
@@ -368,7 +338,7 @@ function GitFileItem({ path, status }: { path: string; status: GitStatus }) {
 /* ── Recursive entries ────────────────────────────────────────── */
 
 function DirEntries({
-  entries, tree, toggle, depth, gitFiles, dirChangeMap,
+  entries, tree, toggle, depth, gitFiles, dirChangeMap, onFileReference,
 }: {
   entries: FileEntry[]
   tree: Map<string, DirNode>
@@ -376,20 +346,21 @@ function DirEntries({
   depth: number
   gitFiles: GitMap
   dirChangeMap: Map<string, GitStatus> | null
+  onFileReference?: (path: string) => void
 }) {
   return (
     <>
       {entries.map(entry => (
         entry.type === 'dir'
-          ? <DirItem key={entry.path} entry={entry} tree={tree} toggle={toggle} depth={depth} gitFiles={gitFiles} dirChangeMap={dirChangeMap} />
-          : <FileItem key={entry.path} entry={entry} depth={depth} gitStatus={gitFiles[entry.path]} />
+          ? <DirItem key={entry.path} entry={entry} tree={tree} toggle={toggle} depth={depth} gitFiles={gitFiles} dirChangeMap={dirChangeMap} onFileReference={onFileReference} />
+          : <FileItem key={entry.path} entry={entry} depth={depth} gitStatus={gitFiles[entry.path]} onFileReference={onFileReference} />
       ))}
     </>
   )
 }
 
 function DirItem({
-  entry, tree, toggle, depth, gitFiles, dirChangeMap,
+  entry, tree, toggle, depth, gitFiles, dirChangeMap, onFileReference,
 }: {
   entry: FileEntry
   tree: Map<string, DirNode>
@@ -397,6 +368,7 @@ function DirItem({
   depth: number
   gitFiles: GitMap
   dirChangeMap: Map<string, GitStatus> | null
+  onFileReference?: (path: string) => void
 }) {
   const node = tree.get(entry.path)
   const isOpen = node?.open ?? false
@@ -404,47 +376,60 @@ function DirItem({
 
   return (
     <>
-      <button
-        onClick={() => toggle(entry.path)}
-        className="w-full flex items-center h-[22px] pr-2 text-left
-          hover:bg-[var(--ax-text-primary)]/[0.06] active:bg-[var(--ax-text-primary)]/[0.08]"
-        style={{ paddingLeft: 8 + depth * 16 }}
-      >
-        <span className="w-4 flex items-center justify-center shrink-0">
-          {isOpen
-            ? <ChevronDown size={12} className="text-ax-text-tertiary" />
-            : <ChevronRight size={12} className="text-ax-text-tertiary" />
-          }
-        </span>
-        <span className="shrink-0 mx-0.5">
-          <FolderIcon open={isOpen} />
-        </span>
-        <span
-          className="ml-1 truncate flex-1"
-          style={dirStatus ? { color: GIT_COLOR[dirStatus] } : undefined}
+      <div className="group relative">
+        <button
+          onClick={() => toggle(entry.path)}
+          className="w-full flex items-center h-[22px] pr-2 text-left
+            hover:bg-[var(--ax-text-primary)]/[0.06] active:bg-[var(--ax-text-primary)]/[0.08]"
+          style={{ paddingLeft: 8 + depth * 16 }}
         >
-          <span className={dirStatus ? '' : 'text-ax-text-secondary'}>{entry.name}</span>
-        </span>
-      </button>
+          <span className="w-4 flex items-center justify-center shrink-0">
+            {isOpen
+              ? <ChevronDown size={12} className="text-ax-text-tertiary" />
+              : <ChevronRight size={12} className="text-ax-text-tertiary" />
+            }
+          </span>
+          <span className="shrink-0 mx-0.5">
+            <FolderIcon open={isOpen} />
+          </span>
+          <span
+            className="ml-1 truncate flex-1"
+            style={dirStatus ? { color: GIT_COLOR[dirStatus] } : undefined}
+          >
+            <span className={dirStatus ? '' : 'text-ax-text-secondary'}>{entry.name}</span>
+          </span>
+        </button>
+        {onFileReference && (
+          <button
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center
+              rounded opacity-0 group-hover:opacity-100 text-ax-text-ghost hover:text-ax-brand
+              hover:bg-ax-brand/10 transition-all"
+            onClick={(e) => { e.stopPropagation(); onFileReference(entry.path + '/') }}
+            title={`Reference @${entry.path}/`}
+          >
+            <AtSign size={10} />
+          </button>
+        )}
+      </div>
       {isOpen && node?.entries && (
         <div className="relative">
           <div
             className="absolute top-0 bottom-0 w-px bg-[var(--ax-border-subtle)]"
             style={{ left: 16 + depth * 16 }}
           />
-          <DirEntries entries={node.entries} tree={tree} toggle={toggle} depth={depth + 1} gitFiles={gitFiles} dirChangeMap={dirChangeMap} />
+          <DirEntries entries={node.entries} tree={tree} toggle={toggle} depth={depth + 1} gitFiles={gitFiles} dirChangeMap={dirChangeMap} onFileReference={onFileReference} />
         </div>
       )}
     </>
   )
 }
 
-function FileItem({ entry, depth, gitStatus }: { entry: FileEntry; depth: number; gitStatus?: GitStatus }) {
+function FileItem({ entry, depth, gitStatus, onFileReference }: { entry: FileEntry; depth: number; gitStatus?: GitStatus; onFileReference?: (path: string) => void }) {
   const icon = getFileIcon(entry.name)
 
   return (
     <div
-      className="flex items-center h-[22px] pr-2
+      className="group relative flex items-center h-[22px] pr-2
         hover:bg-[var(--ax-text-primary)]/[0.06] cursor-default"
       style={{ paddingLeft: 8 + depth * 16 + 18 }}
     >
@@ -475,6 +460,18 @@ function FileItem({ entry, depth, gitStatus }: { entry: FileEntry; depth: number
         >
           {GIT_LABEL[gitStatus]}
         </span>
+      )}
+      {/* @ reference button */}
+      {onFileReference && (
+        <button
+          className="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center
+            rounded opacity-0 group-hover:opacity-100 text-ax-text-ghost hover:text-ax-brand
+            hover:bg-ax-brand/10 transition-all"
+          onClick={(e) => { e.stopPropagation(); onFileReference(entry.path) }}
+          title={`Reference @${entry.path}`}
+        >
+          <AtSign size={10} />
+        </button>
       )}
     </div>
   )

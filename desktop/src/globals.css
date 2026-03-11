@@ -572,3 +572,15 @@ body {
 }
 .agent-thinking-dot:nth-child(2) { animation-delay: 0.2s; }
 .agent-thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ================================================
+   File Autocomplete — slide up from textarea
+   ================================================ */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.15s ease-out both;
+}

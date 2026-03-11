@@ -184,7 +184,7 @@ risk_items: <number of items flagged as risky>
 ### Tone
 Be conversational but precise. Reference specific files, commits, and sessions. You are a sharp colleague reviewing the day's work — not a summarizer. Say what matters, why it matters, and what the developer should do about it.
 
-IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary, no notes about your process. Start with the YAML frontmatter (---) and end with the last section. Do not mention files you wrote, tools you used, or sandbox limitations." | claude -p --output-format json --allowedTools "Read,Glob,Grep" 2>"$CLAUDE_STDERR")
+IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary, no notes about your process. Start with the YAML frontmatter (---) and end with the last section. Do not mention files you wrote, tools you used, or sandbox limitations." | claude -p --output-format json 2>"$CLAUDE_STDERR")
 
 # Validate response is valid JSON with a .result field
 if ! echo "$ROLLUP_RESULT" | jq -e '.result' > /dev/null 2>&1; then
@@ -197,9 +197,9 @@ if ! echo "$ROLLUP_RESULT" | jq -e '.result' > /dev/null 2>&1; then
     exit 1
 fi
 
-ROLLUP_TEXT=$(echo "$ROLLUP_RESULT" | jq -r '.result')
+RAW_TEXT=$(echo "$ROLLUP_RESULT" | jq -r '.result')
 
-if [[ -z "$ROLLUP_TEXT" ]] || [[ "$ROLLUP_TEXT" == "null" ]]; then
+if [[ -z "$RAW_TEXT" ]] || [[ "$RAW_TEXT" == "null" ]]; then
     echo "FATAL: Claude returned empty rollup."
     [[ -s "$CLAUDE_STDERR" ]] && echo "Claude stderr:" && cat "$CLAUDE_STDERR"
     echo "[axon-rollup] end=$(date -u +"%Y-%m-%dT%H:%M:%SZ") project=$PROJECT status=failed error=empty_result"
@@ -207,6 +207,54 @@ if [[ -z "$ROLLUP_TEXT" ]] || [[ "$ROLLUP_TEXT" == "null" ]]; then
     exit 1
 fi
 rm -f "$CLAUDE_STDERR"
+
+# Sanitize Claude output:
+# 1. Strip preamble before the first --- delimiter
+# 2. Unwrap code-fenced frontmatter (```yaml\n---\n...\n---\n```)
+ROLLUP_TEXT="$RAW_TEXT"
+
+# Strip preamble — find the first YAML frontmatter delimiter
+if ! echo "$ROLLUP_TEXT" | head -1 | grep -q "^---"; then
+    echo "  ⚠ Stripping preamble from Claude output..."
+    ROLLUP_TEXT=$(echo "$ROLLUP_TEXT" | sed -n '/^---$/,$p')
+fi
+
+# Unwrap code-fenced frontmatter and stray separators
+# Strategy: find the line "type: rollup" and work backwards to the --- before it
+if echo "$ROLLUP_TEXT" | grep -q '```'; then
+    echo "  ⚠ Unwrapping code-fenced frontmatter..."
+    ROLLUP_TEXT=$(echo "$ROLLUP_TEXT" | sed '/^```\(yaml\)\{0,1\}$/d')
+fi
+# Find the --- that immediately precedes "type: rollup" — that's the real frontmatter start
+# Then take everything from that --- onwards
+FRONTMATTER_LINE=$(echo "$ROLLUP_TEXT" | grep -n "^type: rollup" | head -1 | cut -d: -f1)
+if [[ -n "$FRONTMATTER_LINE" ]] && [[ "$FRONTMATTER_LINE" -gt 1 ]]; then
+    # Walk backwards from "type: rollup" to find the opening ---
+    SEARCH_START=$((FRONTMATTER_LINE - 3))
+    [[ "$SEARCH_START" -lt 1 ]] && SEARCH_START=1
+    START_LINE=$(echo "$ROLLUP_TEXT" | sed -n "${SEARCH_START},$((FRONTMATTER_LINE - 1))p" | grep -n "^---$" | tail -1 | cut -d: -f1)
+    if [[ -n "$START_LINE" ]]; then
+        ACTUAL_START=$(( SEARCH_START + START_LINE - 1 ))
+        ROLLUP_TEXT=$(echo "$ROLLUP_TEXT" | tail -n +"$ACTUAL_START")
+    fi
+fi
+
+# Validate frontmatter exists after cleanup
+TRIMMED=$(echo "$ROLLUP_TEXT" | sed '/^$/d' | head -1)
+if [[ "$TRIMMED" != "---" ]]; then
+    echo "FATAL: Rollup doesn't contain YAML frontmatter (first line: ${TRIMMED:0:80})"
+    echo "  Claude output meta-commentary instead of the rollup document."
+    echo "[axon-rollup] end=$(date -u +"%Y-%m-%dT%H:%M:%SZ") project=$PROJECT status=failed error=no_frontmatter"
+    exit 1
+fi
+
+# Validate minimum size (a real rollup is >500 bytes)
+ROLLUP_SIZE=${#ROLLUP_TEXT}
+if [[ "$ROLLUP_SIZE" -lt 500 ]]; then
+    echo "FATAL: Rollup too small (${ROLLUP_SIZE} bytes). Expected >500 for a real rollup."
+    echo "[axon-rollup] end=$(date -u +"%Y-%m-%dT%H:%M:%SZ") project=$PROJECT status=failed error=too_small"
+    exit 1
+fi
 
 # Step 4: Write outputs (same-day protection)
 EPISODE_FILE="$WORKSPACE/episodes/${TODAY}_rollup.md"
@@ -250,8 +298,15 @@ Regenerate state.md. MUST stay under 2000 tokens. If exceeding, prune decisions 
 
 Add YAML frontmatter: type: state, project: $PROJECT, last_rollup: $TODAY
 
-IMPORTANT: Output ONLY the state.md content. No preamble, no meta-commentary, no explanation of changes. Start with the YAML frontmatter (---) and end with the last section." | claude -p --output-format json --allowedTools "Read,Glob,Grep" 2>"$CLAUDE_STDERR2" | jq -r '.result' 2>/dev/null)
+IMPORTANT: Output ONLY the state.md content. No preamble, no meta-commentary, no explanation of changes. Start with the YAML frontmatter (---) and end with the last section." | claude -p --output-format json 2>"$CLAUDE_STDERR2" | jq -r '.result' 2>/dev/null)
 rm -f "$CLAUDE_STDERR2"
+
+# Strip preamble from state output
+if [[ -n "$NEW_STATE" ]] && [[ "$NEW_STATE" != "null" ]]; then
+    if ! echo "$NEW_STATE" | head -1 | grep -q "^---"; then
+        NEW_STATE=$(echo "$NEW_STATE" | sed -n '/^---$/,$p')
+    fi
+fi
 
 if [[ -n "$NEW_STATE" ]] && [[ "$NEW_STATE" != "null" ]]; then
     cp "$WORKSPACE/state.md" "$WORKSPACE/state.md.backup"

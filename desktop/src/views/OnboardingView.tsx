@@ -180,6 +180,7 @@ function RepoSelector({ onSelect }: { onSelect: (repo: DiscoveredRepo) => void }
   const [search, setSearch] = useState('')
   const [customPath, setCustomPath] = useState('')
   const [showCustom, setShowCustom] = useState(false)
+  const [simulateEmpty, setSimulateEmpty] = useState(false)
 
   useEffect(() => {
     fetch('/api/axon/discover-repos')
@@ -191,7 +192,8 @@ function RepoSelector({ onSelect }: { onSelect: (repo: DiscoveredRepo) => void }
       .catch(() => setLoading(false))
   }, [])
 
-  const filtered = repos.filter(r =>
+  const visibleRepos = simulateEmpty ? [] : repos
+  const filtered = visibleRepos.filter(r =>
     r.name.toLowerCase().includes(search.toLowerCase()) ||
     r.path.toLowerCase().includes(search.toLowerCase())
   )
@@ -239,11 +241,40 @@ function RepoSelector({ onSelect }: { onSelect: (repo: DiscoveredRepo) => void }
             </div>
             <span className="ml-3 text-small text-ax-text-tertiary">Discovering repositories...</span>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && search ? (
           <div className="text-center py-12 text-ax-text-tertiary">
-            <Folder size={32} className="mx-auto mb-3 opacity-40" />
-            <p className="text-body">No repositories found</p>
-            <p className="text-small mt-1">Try entering a path manually below</p>
+            <Search size={32} className="mx-auto mb-3 opacity-40" />
+            <p className="text-body">No matches for &ldquo;{search}&rdquo;</p>
+            <p className="text-small mt-1">Try a different search or enter a path manually below</p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-10 px-6">
+            <div className="text-center mb-6">
+              <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-ax-brand/10 flex items-center justify-center">
+                <GitBranch size={24} className="text-ax-brand" />
+              </div>
+              <h3 className="font-serif italic text-h3 text-ax-text-primary mb-2">No Git repositories found</h3>
+              <p className="text-body text-ax-text-secondary leading-relaxed max-w-md mx-auto">
+                Axon builds memory from your Git history — commits, branches, and file changes become the raw signal for nightly rollups and morning briefings.
+              </p>
+            </div>
+            <div className="bg-ax-sunken rounded-xl border border-ax-border-subtle p-5 space-y-3 max-w-md mx-auto">
+              <p className="text-small text-ax-text-secondary font-medium">To get started you need:</p>
+              <ul className="space-y-2 text-small text-ax-text-tertiary">
+                <li className="flex items-start gap-2">
+                  <span className="text-ax-brand mt-0.5">1.</span>
+                  <span>A project folder with <code className="font-mono text-micro bg-ax-elevated px-1 py-0.5 rounded">git init</code> already run</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-ax-brand mt-0.5">2.</span>
+                  <span>At least one commit — Axon reads your commit messages to understand what changed</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-ax-brand mt-0.5">3.</span>
+                  <span>The repo in one of: <code className="font-mono text-micro bg-ax-elevated px-1 py-0.5 rounded">~/Github</code>, <code className="font-mono text-micro bg-ax-elevated px-1 py-0.5 rounded">~/Projects</code>, <code className="font-mono text-micro bg-ax-elevated px-1 py-0.5 rounded">~/Developer</code>, <code className="font-mono text-micro bg-ax-elevated px-1 py-0.5 rounded">~/Code</code>, or enter a custom path below</span>
+                </li>
+              </ul>
+            </div>
           </div>
         ) : (
           filtered.map((repo, idx) => (
@@ -322,6 +353,16 @@ function RepoSelector({ onSelect }: { onSelect: (repo: DiscoveredRepo) => void }
           </button>
         )}
       </div>
+
+      {/* Dev: test empty state */}
+      {import.meta.env.DEV && repos.length > 0 && (
+        <button
+          onClick={() => setSimulateEmpty(!simulateEmpty)}
+          className="font-mono text-micro text-ax-text-ghost hover:text-ax-text-tertiary transition-colors"
+        >
+          {simulateEmpty ? '✕ Exit empty state test' : '⚙ Test empty state'}
+        </button>
+      )}
     </div>
   )
 }

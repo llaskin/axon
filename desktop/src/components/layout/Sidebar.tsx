@@ -20,12 +20,13 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
       {/* Logo */}
       <div className="px-5 py-6">
         <button
-          className="font-serif italic text-h2 text-[var(--ax-text-on-dark)] tracking-tight cursor-pointer
+          className="flex items-center gap-2.5 cursor-pointer
             focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)] rounded"
           onClick={() => setView('timeline')}
           aria-label="Go to timeline"
         >
-          axon
+          <img src="/branding/axon-mark-dark.png" alt="" className="w-7 h-7 rounded" aria-hidden="true" />
+          <span className="font-serif italic text-h2 text-[var(--ax-text-on-dark)] tracking-tight">axon</span>
         </button>
       </div>
 

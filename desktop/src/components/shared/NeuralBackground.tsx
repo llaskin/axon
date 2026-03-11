@@ -4,10 +4,13 @@
  */
 import { useState, useCallback } from 'react'
 import { useProjectStore } from '@/store/projectStore'
+import { useUIStore } from '@/store/uiStore'
 
 export function NeuralBackground() {
   const activeProject = useProjectStore((s) => s.activeProject)
+  const activeView = useUIStore((s) => s.activeView)
   const [imgFailed, setImgFailed] = useState<string | null>(null)
+  const muted = activeView === 'agent'
 
   const gourceUrl = activeProject
     ? `/api/axon/projects/${encodeURIComponent(activeProject)}/gource`
@@ -23,6 +26,14 @@ export function NeuralBackground() {
   const onLoad = useCallback(() => {
     setImgFailed(null)
   }, [])
+
+  if (muted) {
+    return (
+      <div className="absolute inset-0 overflow-hidden pointer-events-none select-none" aria-hidden="true">
+        <div className="absolute inset-0 neural-noise" />
+      </div>
+    )
+  }
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none select-none" aria-hidden="true">
@@ -42,7 +53,7 @@ export function NeuralBackground() {
         </div>
       )}
 
-      {/* Repo name watermark — in gap between header and central content */}
+      {/* Repo name watermark */}
       {activeProject && (
         <div className="absolute inset-x-0 top-[22%] flex justify-center -translate-y-1/2">
           <span className="neural-watermark font-serif italic">

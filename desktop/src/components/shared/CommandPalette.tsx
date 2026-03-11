@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useProjectStore } from '@/store/projectStore'
 import { useUIStore } from '@/store/uiStore'
-import { Clock, Layers, Brain, Settings, Sun, Moon, FolderOpen, Coffee } from 'lucide-react'
+import { Clock, Layers, Brain, Settings, Sun, Moon, FolderOpen, Coffee, Terminal } from 'lucide-react'
 
 interface Command {
   id: string
@@ -29,6 +29,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: 'nav-morning', label: 'Morning', category: 'navigation', icon: Coffee, action: () => { setView('morning'); onClose() }, keywords: 'briefing session chat' },
       { id: 'nav-state', label: 'State', category: 'navigation', icon: Layers, action: () => { setView('state'); onClose() }, keywords: 'dashboard focus' },
       { id: 'nav-decisions', label: 'Decisions', category: 'navigation', icon: Brain, action: () => { setView('decisions'); onClose() }, keywords: 'traces search' },
+      { id: 'nav-agent', label: 'Agent', category: 'navigation', icon: Terminal, action: () => { setView('agent'); onClose() }, keywords: 'agent run claude tools terminal' },
       { id: 'nav-settings', label: 'Settings', category: 'navigation', icon: Settings, action: () => { setView('settings'); onClose() }, keywords: 'config preferences' },
       // Actions
       { id: 'action-theme', label: theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode', category: 'action', icon: theme === 'light' ? Moon : Sun, action: () => { toggleTheme(); onClose() }, keywords: 'theme dark light mode' },

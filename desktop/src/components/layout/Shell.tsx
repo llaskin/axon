@@ -6,6 +6,7 @@ import { useThemeSync } from '@/hooks/useThemeSync'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useProjectStore } from '@/store/projectStore'
+import { useUIStore } from '@/store/uiStore'
 import { DebugMenu } from '@/components/shared/DebugMenu'
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -17,6 +18,8 @@ export function Shell({ children }: { children: ReactNode }) {
   useKeyboardShortcuts(togglePalette)
 
   const swipeDirection = useProjectStore((s) => s.swipeDirection)
+  const activeView = useUIStore((s) => s.activeView)
+  const isAgent = activeView === 'agent'
 
   // Determine animation class based on swipe direction
   const swipeClass = swipeDirection === 'right' ? 'animate-slide-right'
@@ -30,7 +33,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <main className="flex-1 overflow-y-auto bg-ax-base relative" role="main" aria-label="Main content" id="main-content">
         <NeuralBackground />
         <DebugMenu />
-        <div className={`relative max-w-3xl mx-auto px-8 py-10 ${swipeClass}`} key={useProjectStore.getState().activeProject || 'none'}>
+        <div className={`relative ${isAgent ? 'h-full' : 'max-w-3xl mx-auto px-8 py-10'} ${swipeClass}`} key={useProjectStore.getState().activeProject || 'none'}>
           {children}
         </div>
       </main>

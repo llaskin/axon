@@ -440,3 +440,135 @@ body {
   filter: none;
   mix-blend-mode: screen;
 }
+
+/* ================================================
+   Agent Background — subtle noise texture (paper feel)
+   ================================================ */
+.neural-noise {
+  opacity: 0.4;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+}
+
+[data-theme="dark"] .neural-noise {
+  opacity: 0.15;
+}
+
+/* ================================================
+   Agent Markdown — prose styling for AI responses
+   ================================================ */
+.agent-markdown p {
+  margin: 0.25em 0;
+}
+.agent-markdown p + p {
+  margin-top: 0.5em;
+}
+.agent-markdown strong {
+  font-weight: 600;
+  color: var(--ax-text-primary);
+}
+.agent-markdown em {
+  font-style: italic;
+}
+.agent-markdown code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85em;
+  background: var(--ax-bg-sunken);
+  border: 1px solid var(--ax-border-subtle);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+.agent-markdown pre {
+  margin: 0.5em 0;
+  padding: 0.75em;
+  background: var(--ax-bg-sunken);
+  border: 1px solid var(--ax-border-subtle);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.agent-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+.agent-markdown ul, .agent-markdown ol {
+  margin: 0.25em 0;
+  padding-left: 1.5em;
+}
+.agent-markdown li {
+  margin: 0.15em 0;
+}
+.agent-markdown li::marker {
+  color: var(--ax-text-tertiary);
+}
+.agent-markdown h1, .agent-markdown h2, .agent-markdown h3 {
+  font-weight: 600;
+  margin: 0.5em 0 0.25em;
+  color: var(--ax-text-primary);
+}
+.agent-markdown h1 { font-size: 1.1em; }
+.agent-markdown h2 { font-size: 1em; }
+.agent-markdown h3 { font-size: 0.95em; }
+.agent-markdown a {
+  color: var(--ax-brand-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--ax-brand-primary);
+  text-underline-offset: 2px;
+}
+.agent-markdown blockquote {
+  border-left: 2px solid var(--ax-border-strong);
+  padding-left: 0.75em;
+  margin: 0.5em 0;
+  color: var(--ax-text-secondary);
+}
+.agent-markdown hr {
+  border: none;
+  border-top: 1px solid var(--ax-border-subtle);
+  margin: 0.5em 0;
+}
+.agent-markdown table {
+  border-collapse: collapse;
+  font-size: 0.85em;
+  margin: 0.5em 0;
+}
+.agent-markdown th, .agent-markdown td {
+  border: 1px solid var(--ax-border-subtle);
+  padding: 0.25em 0.5em;
+}
+.agent-markdown th {
+  background: var(--ax-bg-sunken);
+  font-weight: 600;
+}
+
+/* ================================================
+   Agent Terminal — dark block for tool output
+   ================================================ */
+.agent-terminal {
+  background: var(--ax-bg-sunken);
+  color: var(--ax-text-primary);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+[data-theme="dark"] .agent-terminal {
+  background: #0D0B09;
+}
+
+/* Agent thinking dots */
+@keyframes agentThink {
+  0%, 60%, 100% { opacity: 0.2; }
+  30% { opacity: 1; }
+}
+
+.agent-thinking-dot {
+  animation: agentThink 1.4s ease-in-out infinite;
+}
+.agent-thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.agent-thinking-dot:nth-child(3) { animation-delay: 0.4s; }

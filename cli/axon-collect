@@ -40,6 +40,20 @@ if [[ -f "$CONFIG_FILE" ]]; then
     [[ -n "$_mc" ]] && [[ "$_mc" =~ ^[0-9]+$ ]] && MAX_COMMITS="$_mc"
 fi
 
+# Read custom test file pattern from config (default: common conventions)
+# Users can override in config.yaml:
+#   file-tree:
+#     test_pattern: '\.(test|spec)\.(ts|py)$|spec/.*\.rb$'
+# Broad default: any code file with test/spec in name or under test*/spec* dirs
+# Covers: JS/TS, Python, Go, Rust, Java, Kotlin, C#, PHP, Ruby, Swift, Elixir, Dart, C/C++, etc.
+CODE_EXTS='(ts|tsx|js|jsx|py|go|rs|java|kt|cs|php|rb|swift|ex|exs|dart|c|cpp|cc|h|hpp|m|mm|scala|clj|lua|zig|nim|v|cr)'
+DEFAULT_TEST_PATTERN="\.(test|spec)\.${CODE_EXTS}$|tests?/.*\.${CODE_EXTS}$|specs?/.*\.${CODE_EXTS}$|_test\.${CODE_EXTS}$|Test\.(java|kt|scala)$|Tests?\.(cs|swift)$|_spec\.rb$"
+TEST_PATTERN="$DEFAULT_TEST_PATTERN"
+if [[ -f "$CONFIG_FILE" ]]; then
+    _tp=$(awk '/test_pattern:/{$1=""; print substr($0,2)}' "$CONFIG_FILE" 2>/dev/null | sed "s/['\"]//g" | tr -d ' ')
+    [[ -n "$_tp" ]] && TEST_PATTERN="$_tp"
+fi
+
 # Determine time window
 if [[ -n "${SINCE:-}" ]]; then
     GIT_SINCE="$SINCE"
@@ -122,6 +136,11 @@ elif git -C "$PROJECT_PATH" rev-parse --git-dir > /dev/null 2>&1; then
         PREV_HASH=$(grep "tree_hash:" "$PREV_TREE" 2>/dev/null | awk '{print $2}' || true)
     fi
 
+    # Count test files for frontmatter
+    TEST_FILE_COUNT=$(git -C "$PROJECT_PATH" ls-files \
+        | grep -Ei "$TEST_PATTERN" \
+        | wc -l | tr -d ' ')
+
     cat > "$OUTFILE" << EOF
 ---
 type: file-tree
@@ -130,6 +149,7 @@ collected_at: $(echo "$NOW" | sed 's/T\([0-9]*\)-\([0-9]*\)-\([0-9]*\)Z/T\1:\2:\
 tree_hash: $TREE_HASH
 previous_tree_hash: ${PREV_HASH:-none}
 total_files: $FILE_COUNT
+test_files: $TEST_FILE_COUNT
 ---
 
 # File Tree: $PROJECT
@@ -147,7 +167,49 @@ EOF
         echo "## No structural changes" >> "$OUTFILE"
     fi
 
-    echo "  ✓ file-tree: $FILE_COUNT files (hash: ${TREE_HASH:0:12}...)"
+    # --- File inventory by extension ---
+    echo "" >> "$OUTFILE"
+    echo "## File Inventory by Extension" >> "$OUTFILE"
+    git -C "$PROJECT_PATH" ls-files \
+        | sed 's/.*\.//' | sort | uniq -c | sort -rn \
+        | awk '{printf "- `.%s`: %d files\n", $2, $1}' >> "$OUTFILE"
+
+    # --- Test file inventory ---
+    TEST_COUNT=$(git -C "$PROJECT_PATH" ls-files \
+        | grep -Ei "$TEST_PATTERN" \
+        | wc -l | tr -d ' ')
+    echo "" >> "$OUTFILE"
+    echo "## Test Files ($TEST_COUNT)" >> "$OUTFILE"
+    if [[ "$TEST_COUNT" -gt 0 ]]; then
+        git -C "$PROJECT_PATH" ls-files \
+            | grep -Ei "$TEST_PATTERN" \
+            | while IFS= read -r tfile; do
+                LINES=$(wc -l < "$PROJECT_PATH/$tfile" 2>/dev/null | tr -d ' ')
+                echo "- \`$tfile\` ($LINES lines)" >> "$OUTFILE"
+            done
+    fi
+
+    # --- Per-directory file counts (compressed structural signal) ---
+    echo "" >> "$OUTFILE"
+    echo "## Directory File Counts" >> "$OUTFILE"
+    git -C "$PROJECT_PATH" ls-files \
+        | sed 's|/[^/]*$||' | sort | uniq -c | sort -rn \
+        | awk '{printf "- `%s/`: %d files\n", $2, $1}' >> "$OUTFILE"
+
+    # --- Directory structure (filtered tree) ---
+    echo "" >> "$OUTFILE"
+    echo "## Directory Structure" >> "$OUTFILE"
+    if command -v tree &>/dev/null; then
+        tree "$PROJECT_PATH" -I 'node_modules|__pycache__|.next|dist|build|.git|venv|.venv|.tox|coverage|.pytest_cache|.mypy_cache' \
+            --dirsfirst -L 3 --noreport >> "$OUTFILE" 2>/dev/null || true
+    else
+        # Fallback: use find to show directory structure
+        git -C "$PROJECT_PATH" ls-files \
+            | sed 's|/[^/]*$||' | sort -u \
+            | awk '{printf "- `%s/`\n", $0}' >> "$OUTFILE"
+    fi
+
+    echo "  ✓ file-tree: $FILE_COUNT files, $TEST_COUNT test files (hash: ${TREE_HASH:0:12}...)"
 else
     echo "  · file-tree: not a git repository"
 fi

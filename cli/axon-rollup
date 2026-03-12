@@ -184,7 +184,18 @@ risk_items: <number of items flagged as risky>
 ### Tone
 Be conversational but precise. Reference specific files, commits, and sessions. You are a sharp colleague reviewing the day's work — not a summarizer. Say what matters, why it matters, and what the developer should do about it.
 
-IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary, no notes about your process. Start with the YAML frontmatter (---) and end with the last section. Do not mention files you wrote, tools you used, or sandbox limitations." | claude -p --output-format json 2>"$CLAUDE_STDERR")
+### Verification (CRITICAL)
+You have access to Read, Glob, and Grep tools. The dendrites above are compressed summaries — they are LEADS, not ground truth. Before making ANY claim about what exists or doesn't exist in the codebase:
+
+1. **Never assert absence without checking.** If dendrites don't mention tests, that doesn't mean there are no tests. Use \`Glob\` or \`Grep\` to verify: e.g. \`Glob('**/test_*.py')\`, \`Grep('def test_', type='py')\`.
+2. **Sanity-check key claims.** Before writing "zero test coverage on X", grep for test files related to X. Before writing "no CI pipeline", check for .github/workflows or similar.
+3. **Cross-reference the file tree.** The dendrite has directory file counts. If you see \`backend/tests/e2e/: 18 files\`, there ARE tests there — read a few to understand coverage.
+4. **Don't assume unchanged = absent.** Files not touched since the last rollup still exist. The dendrite shows what changed, not everything that exists.
+5. **Be a journalist, not a summarizer.** Verify before publishing. If you're not sure about a claim, check the codebase. A wrong claim in a rollup erodes trust in the entire system.
+
+The project path is: $PROJECT_PATH
+
+IMPORTANT: Output ONLY the rollup document. No preamble, no meta-commentary, no notes about your process. Start with the YAML frontmatter (---) and end with the last section. Do not mention files you wrote, tools you used, or sandbox limitations." | claude -p --output-format json --allowedTools "Read,Glob,Grep" 2>"$CLAUDE_STDERR")
 
 # Validate response is valid JSON with a .result field
 if ! echo "$ROLLUP_RESULT" | jq -e '.result' > /dev/null 2>&1; then

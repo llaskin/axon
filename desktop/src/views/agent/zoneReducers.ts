@@ -4,11 +4,11 @@
 
 // === Constants ===
 export const GRID = 20
-export const TILE_W = 240
-export const TILE_H = 160
-export const ZONE_PAD = 24
-export const ZONE_GAP = 16
-export const ZONE_HEADER_H = 40
+export const TILE_W = 200
+export const TILE_H = 72
+export const ZONE_PAD = 16
+export const ZONE_GAP = 10
+export const ZONE_HEADER_H = 32
 export const ZONE_MIN_W = TILE_W + ZONE_PAD * 2
 export const ZONE_MIN_H = ZONE_HEADER_H + TILE_H / 2 + ZONE_PAD
 export const ZONE_COLORS = [
@@ -19,15 +19,6 @@ export const ZONE_COLORS = [
   '#B85450', // brick (ax-error)
   '#8B7B6B', // warm gray
 ]
-
-// Compact mode constants
-export const COMPACT_TILE_W = 200
-export const COMPACT_TILE_H = 72
-export const COMPACT_ZONE_PAD = 16
-export const COMPACT_ZONE_GAP = 8
-export const COMPACT_ZONE_HEADER_H = 28
-export const COMPACT_ZONE_MIN_W = COMPACT_TILE_W + COMPACT_ZONE_PAD * 2
-export const COMPACT_ZONE_MIN_H = COMPACT_ZONE_HEADER_H + COMPACT_TILE_H / 2 + COMPACT_ZONE_PAD
 
 // === Types ===
 export interface TileState {
@@ -207,19 +198,9 @@ export interface ZoneLayout {
 
 export function computeZoneLayouts(
   zones: ZoneState[],
-  tiles: TileState[],
-  compact = false,
-  sessionRecency?: Map<string, string>
+  tiles: TileState[]
 ): Map<string, ZoneLayout> {
   const layouts = new Map<string, ZoneLayout>()
-
-  const tileW = compact ? COMPACT_TILE_W : TILE_W
-  const tileH = compact ? COMPACT_TILE_H : TILE_H
-  const pad = compact ? COMPACT_ZONE_PAD : ZONE_PAD
-  const gap = compact ? COMPACT_ZONE_GAP : ZONE_GAP
-  const headerH = compact ? COMPACT_ZONE_HEADER_H : ZONE_HEADER_H
-  const minW = compact ? COMPACT_ZONE_MIN_W : ZONE_MIN_W
-  const minH = compact ? COMPACT_ZONE_MIN_H : ZONE_MIN_H
 
   // Sort zones by depth (leaves first) so children are computed before parents
   const sortedZones = [...zones].sort(
@@ -227,41 +208,29 @@ export function computeZoneLayouts(
   )
 
   for (const zone of sortedZones) {
-    let zoneTiles = tiles.filter((t) => t.zoneId === zone.id)
+    const zoneTiles = tiles.filter((t) => t.zoneId === zone.id)
     const childZones = zones.filter((z) => z.parentZoneId === zone.id)
 
-    // In compact mode, sort tiles by recency (most recent first)
-    if (compact && sessionRecency) {
-      zoneTiles = [...zoneTiles].sort((a, b) => {
-        const aTime = sessionRecency.get(a.sessionId) || ''
-        const bTime = sessionRecency.get(b.sessionId) || ''
-        return bTime.localeCompare(aTime)
-      })
-    }
-
-    // Compute tile grid — compact uses wider grids for landscape tiles
-    const cols = compact
-      ? Math.max(1, Math.ceil(Math.sqrt(zoneTiles.length * 2.5)))
-      : Math.max(1, Math.ceil(Math.sqrt(zoneTiles.length)))
+    const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(zoneTiles.length))))
     const rows = Math.max(1, Math.ceil(zoneTiles.length / cols))
 
     const tilePositions = new Map<string, { x: number; y: number }>()
     zoneTiles.forEach((t, i) => {
       tilePositions.set(t.sessionId, {
-        x: zone.x + pad + (i % cols) * (tileW + gap),
-        y: zone.y + headerH + pad + Math.floor(i / cols) * (tileH + gap)
+        x: zone.x + ZONE_PAD + (i % cols) * (TILE_W + ZONE_GAP),
+        y: zone.y + ZONE_HEADER_H + ZONE_PAD + Math.floor(i / cols) * (TILE_H + ZONE_GAP)
       })
     })
 
     // Base size from tiles
     let width =
       zoneTiles.length > 0
-        ? cols * (tileW + gap) - gap + pad * 2
-        : minW
+        ? cols * (TILE_W + ZONE_GAP) - ZONE_GAP + ZONE_PAD * 2
+        : ZONE_MIN_W
     let height =
       zoneTiles.length > 0
-        ? headerH + rows * (tileH + gap) - gap + pad * 2
-        : minH
+        ? ZONE_HEADER_H + rows * (TILE_H + ZONE_GAP) - ZONE_GAP + ZONE_PAD * 2
+        : ZONE_MIN_H
 
     // Expand to contain child zones
     if (childZones.length > 0) {
@@ -270,8 +239,8 @@ export function computeZoneLayouts(
       for (const child of childZones) {
         const childLayout = layouts.get(child.id)
         if (childLayout) {
-          maxRight = Math.max(maxRight, child.x + childLayout.width + pad)
-          maxBottom = Math.max(maxBottom, child.y + childLayout.height + pad)
+          maxRight = Math.max(maxRight, child.x + childLayout.width + ZONE_PAD)
+          maxBottom = Math.max(maxBottom, child.y + childLayout.height + ZONE_PAD)
         }
       }
       width = Math.max(width, maxRight - zone.x)
@@ -282,6 +251,179 @@ export function computeZoneLayouts(
   }
 
   return layouts
+}
+
+// === Canvas compaction / reorganize ===
+
+const ZONE_FLOW_GAP = 32   // horizontal gap between zones in a column
+const ROW_GAP = 40          // vertical gap between rows in a cluster
+const GROUP_GAP = 100       // horizontal gap between recency clusters
+
+type RecencyBucket = 'Active' | 'Recent' | 'Older'
+const BUCKET_COLORS: Record<RecencyBucket, string> = {
+  Active: '#C8956C',  // copper
+  Recent: '#6B8FAD',  // steel
+  Older: '#8B7B6B',   // warm gray
+}
+const BUCKET_ORDER: Record<RecencyBucket, number> = { Active: 0, Recent: 1, Older: 2 }
+
+function classifyRecency(modifiedAt: string | null): RecencyBucket {
+  if (!modifiedAt) return 'Older'
+  const age = Date.now() - new Date(modifiedAt).getTime()
+  if (age < 24 * 60 * 60 * 1000) return 'Active'
+  if (age < 7 * 24 * 60 * 60 * 1000) return 'Recent'
+  return 'Older'
+}
+
+export function computeCompactLayout(
+  zones: ZoneState[],
+  tiles: TileState[],
+  sessions: { id: string; modified_at: string | null }[]
+): { zones: ZoneState[]; tiles: TileState[] } {
+  const sessionMap = new Map(sessions.map(s => [s.id, s]))
+
+  // Deep-copy — preserve nesting
+  const newZones = zones.map(z => ({ ...z }))
+  const newTiles = tiles.map(t => ({
+    ...t,
+    width: TILE_W,
+    height: TILE_H,
+  }))
+
+  // Save original root zone positions for delta computation
+  const origPos = new Map(newZones.map(z => [z.id, { x: z.x, y: z.y }]))
+
+  // Step 1: Auto-zone unzoned tiles by recency bucket
+  const unzoned = newTiles.filter(t => !t.zoneId)
+  if (unzoned.length > 0) {
+    const buckets = new Map<RecencyBucket, TileState[]>()
+    for (const tile of unzoned) {
+      const session = sessionMap.get(tile.sessionId)
+      const bucket = classifyRecency(session?.modified_at ?? null)
+      if (!buckets.has(bucket)) buckets.set(bucket, [])
+      buckets.get(bucket)!.push(tile)
+    }
+    const ts = Date.now()
+    for (const [bucket, bTiles] of buckets) {
+      const zoneId = `zone-auto-${bucket.toLowerCase()}-${ts}`
+      newZones.push({
+        id: zoneId,
+        label: bucket,
+        x: 0, y: 0,
+        color: BUCKET_COLORS[bucket],
+      })
+      for (const tile of bTiles) {
+        tile.zoneId = zoneId
+      }
+    }
+  }
+
+  // Step 2: Recursive recency — a zone's recency = max modified_at across
+  //         all tiles in it AND all descendant zones
+  function getRecursiveMaxTime(zoneId: string): string {
+    let maxTime = ''
+    for (const tile of newTiles) {
+      if (tile.zoneId === zoneId) {
+        const mt = sessionMap.get(tile.sessionId)?.modified_at || ''
+        if (mt > maxTime) maxTime = mt
+      }
+    }
+    for (const z of newZones) {
+      if (z.parentZoneId === zoneId) {
+        const childMax = getRecursiveMaxTime(z.id)
+        if (childMax > maxTime) maxTime = childMax
+      }
+    }
+    return maxTime
+  }
+
+  const zoneRecency = new Map<string, { bucket: RecencyBucket; maxTime: string }>()
+  for (const zone of newZones) {
+    const maxTime = getRecursiveMaxTime(zone.id)
+    zoneRecency.set(zone.id, {
+      bucket: classifyRecency(maxTime || null),
+      maxTime,
+    })
+  }
+
+  // Step 3: Only position root zones (children move with their parent)
+  const rootZones = newZones.filter(z => !z.parentZoneId)
+  rootZones.sort((a, b) => {
+    const ra = zoneRecency.get(a.id)!
+    const rb = zoneRecency.get(b.id)!
+    const bucketDiff = BUCKET_ORDER[ra.bucket] - BUCKET_ORDER[rb.bucket]
+    if (bucketDiff !== 0) return bucketDiff
+    return rb.maxTime.localeCompare(ra.maxTime)
+  })
+
+  // Step 4: Compute accurate root zone sizes (accounts for children)
+  const layouts = computeZoneLayouts(newZones, newTiles)
+  const zoneSizes = new Map<string, { width: number; height: number }>()
+  for (const zone of rootZones) {
+    const layout = layouts.get(zone.id)
+    zoneSizes.set(zone.id, layout
+      ? { width: layout.width, height: layout.height }
+      : { width: ZONE_MIN_W, height: ZONE_MIN_H })
+  }
+
+  // Step 5: Cluster layout — recency buckets as side-by-side columns
+  //         [Active cluster] [Recent cluster] [Older cluster]
+  const bucketGroups = new Map<RecencyBucket, ZoneState[]>()
+  for (const zone of rootZones) {
+    const r = zoneRecency.get(zone.id)!
+    if (!bucketGroups.has(r.bucket)) bucketGroups.set(r.bucket, [])
+    bucketGroups.get(r.bucket)!.push(zone)
+  }
+
+  let clusterX = 0
+  for (const bucket of ['Active', 'Recent', 'Older'] as RecencyBucket[]) {
+    const group = bucketGroups.get(bucket)
+    if (!group || group.length === 0) continue
+
+    const MAX_CLUSTER_HEIGHT = 1200
+    let colX = clusterX
+    let cursorY = 0
+    let colMaxWidth = 0
+    let clusterMaxRight = clusterX
+
+    for (const zone of group) {
+      const size = zoneSizes.get(zone.id)!
+
+      // Wrap to a new internal column if too tall
+      if (cursorY > 0 && cursorY + size.height > MAX_CLUSTER_HEIGHT) {
+        colX += colMaxWidth + ZONE_FLOW_GAP
+        cursorY = 0
+        colMaxWidth = 0
+      }
+
+      zone.x = snap(colX)
+      zone.y = snap(cursorY)
+      cursorY += size.height + ROW_GAP
+      colMaxWidth = Math.max(colMaxWidth, size.width)
+      clusterMaxRight = Math.max(clusterMaxRight, colX + size.width)
+    }
+
+    clusterX = clusterMaxRight + GROUP_GAP
+  }
+
+  // Step 6: Move descendant zones by their root's delta
+  for (const root of rootZones) {
+    const orig = origPos.get(root.id)
+    if (!orig) continue
+    const dx = root.x - orig.x
+    const dy = root.y - orig.y
+    if (dx === 0 && dy === 0) continue
+    const descendants = getDescendantZoneIds(root.id, newZones)
+    for (const descId of descendants) {
+      const desc = newZones.find(z => z.id === descId)
+      if (desc) {
+        desc.x = snap(desc.x + dx)
+        desc.y = snap(desc.y + dy)
+      }
+    }
+  }
+
+  return { zones: newZones, tiles: newTiles }
 }
 
 export function computeTilePositionMap(

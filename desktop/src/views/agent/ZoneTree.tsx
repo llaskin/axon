@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { ChevronRight, Plus, X, GripVertical, Search, Star, Tag } from 'lucide-react'
 import type { TileState, ZoneState } from './zoneReducers'
 import type { SessionSummary } from '@/hooks/useSessions'
@@ -33,8 +33,20 @@ export function ZoneTree({
   createZone, renameZone, deleteZone, assignTileZone,
   addTile, removeTile,
 }: ZoneTreeProps) {
-  // Start with all zones collapsed
+  // Start with all zones collapsed — keep collapsing new zones as they load
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(zones.map(z => z.id)))
+  const knownZoneIdsRef = useRef(new Set(zones.map(z => z.id)))
+  useEffect(() => {
+    const newIds = zones.filter(z => !knownZoneIdsRef.current.has(z.id)).map(z => z.id)
+    if (newIds.length > 0) {
+      setCollapsed(prev => {
+        const next = new Set(prev)
+        for (const id of newIds) next.add(id)
+        return next
+      })
+      for (const id of newIds) knownZoneIdsRef.current.add(id)
+    }
+  }, [zones])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [dragOverZoneId, setDragOverZoneId] = useState<string | null>(null)
   const [availableOpen, setAvailableOpen] = useState(true)

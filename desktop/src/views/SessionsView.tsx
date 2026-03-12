@@ -679,6 +679,10 @@ export function SessionsView() {
               setViewport={canvasState.setViewport}
               scheduleSave={canvasState.scheduleSave}
               immediateSave={canvasState.immediateSave}
+              reorgActive={canvasState.reorgActive}
+              onReorganize={() => canvasState.reorganize(sessions)}
+              onReorgApply={canvasState.applyReorg}
+              onReorgCancel={canvasState.cancelReorg}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center">

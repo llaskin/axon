@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
-import { Maximize2, Star } from 'lucide-react'
+import { Maximize2, Star, RefreshCw, Check, X } from 'lucide-react'
 import {
   GRID, TILE_W, TILE_H,
   snap, getZoneDepth, getDescendantZoneIds,
@@ -67,6 +67,10 @@ interface CanvasViewProps {
   setViewport: (v: Viewport) => void
   scheduleSave: () => void
   immediateSave: () => void
+  reorgActive: boolean
+  onReorganize: () => void
+  onReorgApply: () => void
+  onReorgCancel: () => void
 }
 
 /* ── Component ─────────────────────────────────────────────────── */
@@ -76,6 +80,7 @@ export function CanvasView({
   zoneLayouts, tilePositionMap,
   dispatchTiles, dispatchZones, setViewport,
   scheduleSave, immediateSave,
+  reorgActive, onReorganize, onReorgApply, onReorgCancel,
 }: CanvasViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
@@ -281,6 +286,7 @@ export function CanvasView({
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
+    if (reorgActive) return // no drag during preview
     const v = viewportRef.current
 
     // Check for zone header drag
@@ -329,7 +335,7 @@ export function CanvasView({
       hasMoved: false,
     }
     e.preventDefault()
-  }, [zones, tiles, tilePositionMap])
+  }, [zones, tiles, tilePositionMap, reorgActive])
 
   // Clear drop animation after it plays
   useEffect(() => {
@@ -442,6 +448,27 @@ export function CanvasView({
   }, [zones, tiles, applyViewport, dispatchTiles, dispatchZones,
       setViewport, scheduleSave, immediateSave, findZoneAtWorldPoint])
 
+  /* ── Escape cancels reorg ─────────────────────────────────────── */
+
+  useEffect(() => {
+    if (!reorgActive) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onReorgCancel()
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [reorgActive, onReorgCancel])
+
+  // Auto-fit when entering reorg preview
+  const prevReorgRef = useRef(false)
+  useEffect(() => {
+    if (reorgActive && !prevReorgRef.current) {
+      // Give a tick for the new layout to render, then fit
+      requestAnimationFrame(() => fitAll())
+    }
+    prevReorgRef.current = reorgActive
+  }, [reorgActive, fitAll])
+
   /* ── Render ───────────────────────────────────────────────────── */
 
   return (
@@ -471,7 +498,8 @@ export function CanvasView({
               data-zone-id={zone.id}
               className={`absolute rounded-xl border-2 canvas-zone
                 ${isHovered ? 'canvas-zone-hover' : ''}
-                ${isFlashing ? 'canvas-zone-flash' : ''}`}
+                ${isFlashing ? 'canvas-zone-flash' : ''}
+                ${reorgActive ? 'canvas-reorg-transition' : ''}`}
               style={{
                 left: zone.x, top: zone.y,
                 width: layout.width, height: layout.height,
@@ -522,7 +550,8 @@ export function CanvasView({
                 key={tile.sessionId}
                 data-tile-id={tile.sessionId}
                 className={`absolute w-3 h-3 rounded-full cursor-grab canvas-dot
-                  ${isDropped ? 'canvas-tile-dropped' : ''}`}
+                  ${isDropped ? 'canvas-tile-dropped' : ''}
+                  ${reorgActive ? 'canvas-reorg-transition' : ''}`}
                 style={{
                   left: pos.x + TILE_W / 2 - 6,
                   top: pos.y + TILE_H / 2 - 6,
@@ -540,7 +569,8 @@ export function CanvasView({
                 data-tile-id={tile.sessionId}
                 className={`absolute bg-ax-elevated rounded-lg border border-ax-border cursor-grab
                   flex items-center gap-1.5 px-2 overflow-hidden canvas-tile-thumb
-                  ${isDropped ? 'canvas-tile-dropped' : ''}`}
+                  ${isDropped ? 'canvas-tile-dropped' : ''}
+                  ${reorgActive ? 'canvas-reorg-transition' : ''}`}
                 style={{
                   left: pos.x, top: pos.y, width: tile.width, height: tile.height,
                   borderColor: zone ? `color-mix(in srgb, ${zone.color} 30%, var(--ax-border))` : undefined,
@@ -563,7 +593,8 @@ export function CanvasView({
               data-tile-id={tile.sessionId}
               className={`absolute bg-ax-elevated rounded-lg border border-ax-border
                 cursor-grab overflow-hidden flex flex-col canvas-tile
-                ${isDropped ? 'canvas-tile-dropped' : ''}`}
+                ${isDropped ? 'canvas-tile-dropped' : ''}
+                ${reorgActive ? 'canvas-reorg-transition' : ''}`}
               style={{
                 left: pos.x, top: pos.y, width: tile.width, height: tile.height,
                 borderColor: zone ? `color-mix(in srgb, ${zone.color} 20%, var(--ax-border))` : undefined,
@@ -607,8 +638,18 @@ export function CanvasView({
         })}
       </div>
 
-      {/* Zoom indicator + fit button */}
+      {/* HUD — bottom-right: Reorganize, Fit, Zoom */}
       <div className="absolute bottom-3 right-3 flex items-center gap-1">
+        {!reorgActive && tiles.length > 0 && (
+          <button
+            onClick={onReorganize}
+            className="text-ax-text-ghost hover:text-ax-text-secondary bg-ax-elevated/80
+              backdrop-blur px-1.5 py-1 rounded transition-colors"
+            title="Reorganize by recency"
+          >
+            <RefreshCw size={12} />
+          </button>
+        )}
         <button
           onClick={fitAll}
           className="text-ax-text-ghost hover:text-ax-text-secondary bg-ax-elevated/80
@@ -625,6 +666,36 @@ export function CanvasView({
           {Math.round(viewport.scale * 100)}%
         </span>
       </div>
+
+      {/* Reorg confirmation bar — bottom-center */}
+      {reorgActive && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 canvas-reorg-bar
+          flex items-center gap-3 px-4 py-2 rounded-xl
+          bg-ax-elevated/90 backdrop-blur-md border border-ax-border
+          shadow-lg">
+          <span className="font-mono text-[10px] text-ax-text-secondary uppercase tracking-wider">
+            Reorganize preview
+          </span>
+          <button
+            onClick={onReorgApply}
+            className="flex items-center gap-1 px-3 py-1 rounded-lg text-[11px] font-mono
+              bg-ax-brand text-white hover:bg-ax-brand-hover transition-colors"
+          >
+            <Check size={10} />
+            Apply
+          </button>
+          <button
+            onClick={onReorgCancel}
+            className="flex items-center gap-1 px-3 py-1 rounded-lg text-[11px] font-mono
+              text-ax-text-tertiary hover:text-ax-text-secondary bg-ax-sunken
+              hover:bg-ax-border-subtle transition-colors"
+          >
+            <X size={10} />
+            Cancel
+          </button>
+          <span className="text-[9px] font-mono text-ax-text-ghost">Esc</span>
+        </div>
+      )}
 
       {/* Empty state */}
       {tiles.length === 0 && zones.length === 0 && (

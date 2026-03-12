@@ -1,7 +1,7 @@
 import { useReducer, useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import {
   tilesReducer, zonesReducer,
-  computeZoneLayouts, computeTilePositionMap,
+  computeZoneLayouts, computeTilePositionMap, computeCompactLayout,
   ZONE_COLORS, snap, TILE_W, TILE_H, ZONE_MIN_W, ZONE_MIN_H,
   type TileState, type ZoneState,
 } from './zoneReducers'
@@ -14,6 +14,8 @@ export function useCanvasState(projectName: string | null) {
   const [zones, dispatchZones] = useReducer(zonesReducer, [])
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 })
   const [loaded, setLoaded] = useState(false)
+  const [reorgActive, setReorgActive] = useState(false)
+  const reorgSnapshotRef = useRef<{ tiles: TileState[]; zones: ZoneState[] } | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tilesRef = useRef(tiles)
   const zonesRef = useRef(zones)
@@ -33,7 +35,11 @@ export function useCanvasState(projectName: string | null) {
     fetch(`/api/axon/canvas-layout?project=${encodeURIComponent(projectName)}`)
       .then(r => r.json())
       .then(data => {
-        dispatchTiles({ type: 'SET_ALL', tiles: data.tiles || [] })
+        // Normalize tile dimensions to current constants (handles old 240x160 tiles)
+        const loadedTiles = (data.tiles || []).map((t: TileState) => ({
+          ...t, width: TILE_W, height: TILE_H,
+        }))
+        dispatchTiles({ type: 'SET_ALL', tiles: loadedTiles })
         dispatchZones({ type: 'SET_ALL', zones: data.zones || [] })
         if (data.viewport) setViewport(data.viewport)
         savedTileCountRef.current = (data.tiles || []).length
@@ -42,8 +48,12 @@ export function useCanvasState(projectName: string | null) {
       .catch(() => setLoaded(true))
   }, [projectName])
 
-  // Save function
+  // Save function (skipped during reorg preview)
+  const reorgActiveRef = useRef(false)
+  reorgActiveRef.current = reorgActive
+
   const save = useCallback(() => {
+    if (reorgActiveRef.current) return
     const project = projectRef.current
     if (!project) return
     const t = tilesRef.current
@@ -171,6 +181,39 @@ export function useCanvasState(projectName: string | null) {
     immediateSave()
   }, [immediateSave])
 
+  // Reorganize / compaction preview
+  const reorganize = useCallback((sessions: { id: string; modified_at: string | null }[]) => {
+    const currentTiles = tilesRef.current
+    const currentZones = zonesRef.current
+    if (currentTiles.length === 0) return false
+    // Snapshot for undo
+    reorgSnapshotRef.current = {
+      tiles: currentTiles.map(t => ({ ...t })),
+      zones: currentZones.map(z => ({ ...z })),
+    }
+    const result = computeCompactLayout(currentZones, currentTiles, sessions)
+    dispatchTiles({ type: 'SET_ALL', tiles: result.tiles })
+    dispatchZones({ type: 'SET_ALL', zones: result.zones })
+    setReorgActive(true)
+    return true
+  }, [])
+
+  const applyReorg = useCallback(() => {
+    reorgSnapshotRef.current = null
+    setReorgActive(false)
+    immediateSave()
+  }, [immediateSave])
+
+  const cancelReorg = useCallback(() => {
+    const snap = reorgSnapshotRef.current
+    if (snap) {
+      dispatchTiles({ type: 'SET_ALL', tiles: snap.tiles })
+      dispatchZones({ type: 'SET_ALL', zones: snap.zones })
+    }
+    reorgSnapshotRef.current = null
+    setReorgActive(false)
+  }, [])
+
   return {
     tiles, zones, viewport, loaded,
     dispatchTiles, dispatchZones, setViewport,
@@ -179,5 +222,6 @@ export function useCanvasState(projectName: string | null) {
     autoLayout,
     createZone, renameZone, deleteZone, assignTileZone,
     addTile, removeTile,
+    reorgActive, reorganize, applyReorg, cancelReorg,
   }
 }

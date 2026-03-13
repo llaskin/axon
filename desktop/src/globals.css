@@ -295,6 +295,22 @@ body {
   animation: slideInFromLeft 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* View exit transitions — paired with entry for cross-zone feel */
+@keyframes slideExitLeft {
+  from { transform: translateX(0) scale(1); opacity: 1; }
+  to { transform: translateX(-80px) scale(0.97); opacity: 0; }
+}
+@keyframes slideExitRight {
+  from { transform: translateX(0) scale(1); opacity: 1; }
+  to { transform: translateX(80px) scale(0.97); opacity: 0; }
+}
+.animate-exit-left {
+  animation: slideExitLeft 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.animate-exit-right {
+  animation: slideExitRight 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
 /* Vertical project switch transitions */
 @keyframes slideUpIn {
   0% { opacity: 0; transform: translateY(100px) scale(0.96); filter: blur(6px); }

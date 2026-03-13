@@ -92,7 +92,7 @@ function classifyAgentMessage(msg: Record<string, unknown>): AgentSSEEvent[] {
 
 export function axonDevApi(): Plugin {
   const AXON_HOME = resolve(join(homedir(), '.axon'))
-  let sessionIndexInitialized = false
+  let lastSessionIndex = 0
 
   return {
     name: 'axon-dev-api',
@@ -954,14 +954,14 @@ export function axonDevApi(): Plugin {
 
           // --- Session Browser Endpoints ---
 
-          // Lazy-init session indexer (non-blocking)
-          if (!sessionIndexInitialized && req.url?.startsWith('/api/axon/sessions')) {
-            sessionIndexInitialized = true
+          // Re-index sessions if stale (>30s since last run)
+          if (req.url?.startsWith('/api/axon/sessions') && Date.now() - lastSessionIndex > 30_000) {
+            lastSessionIndex = Date.now()
             try {
               const { runFullIndex } = await import('./src/lib/sessionIndexer')
               runFullIndex()
             } catch (err) {
-              console.error('[Axon] Session indexer init failed:', err)
+              console.error('[Axon] Session indexer failed:', err)
             }
           }
 

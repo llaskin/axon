@@ -14,16 +14,19 @@ import { SessionsView } from '@/views/SessionsView'
 import { TodosView } from '@/views/TodosView'
 import { useUIStore, type ViewId } from '@/store/uiStore'
 
-/* ── Carousel pane — lazy-mounted, slides horizontally ────────── */
+/* ── Horizontal strip ────────────────────────────────────────── */
 
-// The three main "desktops" live in a horizontal strip and slide
-// between each other. Going Timeline→Morning visually passes
-// through Agents. Each pane stays mounted once visited (XTerm
-// instances, scroll positions, and WebSocket data survive).
+// All six sidebar views live in one physical horizontal strip.
+// Navigating between any of them slides the strip — same
+// animation everywhere. Sub-views overlay on top.
 
-const CAROUSEL: ViewId[] = ['morning', 'agents', 'timeline']
+const STRIP: ViewId[] = ['morning', 'agents', 'timeline', 'todos', 'terminal', 'settings']
+const FULL_BLEED = new Set<ViewId>(['agents', 'terminal'])
+const EDITORIAL = new Set<ViewId>(['morning', 'agents', 'timeline'])
 
-function CarouselPane({
+/* ── Strip pane — lazy-mounted, slides horizontally ──────────── */
+
+function StripPane({
   viewId, active, offsetPercent, children,
 }: {
   viewId: string
@@ -31,14 +34,12 @@ function CarouselPane({
   offsetPercent: number
   children: ReactNode
 }) {
-  const [everActive, setEverActive] = useState(false)
+  // Content lazy-mounts on first visit; wrapper div is always in the
+  // DOM so it slides from its off-screen position smoothly.
+  const [everActive, setEverActive] = useState(active)
   useEffect(() => {
     if (active && !everActive) setEverActive(true)
   }, [active, everActive])
-
-  if (!everActive) return null
-
-  const fullBleed = viewId === 'agents'
 
   return (
     <div
@@ -48,65 +49,22 @@ function CarouselPane({
         transition: 'transform 300ms ease-out',
       }}
     >
-      <div className={fullBleed ? 'h-full' : 'max-w-3xl mx-auto px-8 py-10 overflow-y-auto h-full'}>
-        {children}
+      <div className={FULL_BLEED.has(viewId as ViewId) ? 'h-full' : 'max-w-3xl mx-auto px-8 py-10 overflow-y-auto h-full'}>
+        {everActive ? children : null}
       </div>
     </div>
   )
 }
 
-/* ── Persistent overlay — stays mounted once activated ────────── */
+/* ── Editorial navigation pills ──────────────────────────────── */
 
-// Used for views that need terminal persistence but aren't part
-// of the main carousel (e.g. dedicated Terminal view).
-
-function PersistentView({
-  active, fullBleed, swipeDir, children,
-}: {
-  active: boolean
-  fullBleed?: boolean
-  swipeDir: 'left' | 'right' | 'none'
-  children: ReactNode
-}) {
-  const [everActive, setEverActive] = useState(false)
-  const [animClass, setAnimClass] = useState('')
-
-  useEffect(() => {
-    if (active && !everActive) setEverActive(true)
-    if (active) {
-      setAnimClass(
-        swipeDir === 'right' ? 'animate-slide-right'
-        : swipeDir === 'left' ? 'animate-slide-left'
-        : 'animate-fade-in'
-      )
-      const t = setTimeout(() => setAnimClass(''), 300)
-      return () => clearTimeout(t)
-    }
-  }, [active, swipeDir])
-
-  if (!everActive) return null
-
-  return (
-    <div
-      className={`${active ? '' : 'hidden'} ${animClass}`}
-      style={{ height: '100%' }}
-    >
-      <div className={fullBleed ? 'h-full' : 'max-w-3xl mx-auto px-8 py-10 overflow-y-auto h-full'}>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-/* ── Carousel navigation pills ────────────────────────────────── */
-
-const CAROUSEL_NAV = [
+const EDITORIAL_NAV = [
   { id: 'morning' as ViewId, label: 'Morning', Icon: Coffee },
   { id: 'agents' as ViewId, label: 'Agents', Icon: Brain },
   { id: 'timeline' as ViewId, label: 'Timeline', Icon: Clock },
 ]
 
-function CarouselNav({ activeView }: { activeView: ViewId }) {
+function EditorialNav({ activeView }: { activeView: ViewId }) {
   const setView = useUIStore(s => s.setView)
 
   return (
@@ -114,7 +72,7 @@ function CarouselNav({ activeView }: { activeView: ViewId }) {
       bg-ax-elevated/80 backdrop-blur-sm border border-ax-border-subtle rounded-full px-1 py-0.5
       shadow-sm"
     >
-      {CAROUSEL_NAV.map(({ id, label, Icon }) => {
+      {EDITORIAL_NAV.map(({ id, label, Icon }) => {
         const isActive = activeView === id
         return (
           <button
@@ -147,27 +105,28 @@ function ViewRouter() {
   const activeView = useUIStore(s => s.activeView)
   const swipeDir = useUIStore(s => s.viewSwipeDirection)
 
-  // Carousel index tracking
-  const carouselIdx = CAROUSEL.indexOf(activeView)
-  const isCarousel = carouselIdx >= 0
-  const lastIdxRef = useRef(carouselIdx >= 0 ? carouselIdx : 1)
-  if (carouselIdx >= 0) lastIdxRef.current = carouselIdx
-  const currentIdx = isCarousel ? carouselIdx : lastIdxRef.current
+  // Strip index tracking
+  const stripIdx = STRIP.indexOf(activeView)
+  const isStrip = stripIdx >= 0
+  const lastIdxRef = useRef(stripIdx >= 0 ? stripIdx : 0)
+  if (stripIdx >= 0) lastIdxRef.current = stripIdx
+  const currentIdx = isStrip ? stripIdx : lastIdxRef.current
 
-  // Re-fit terminals after carousel slide completes (300ms transition)
+  // Re-fit terminals after slide completes (300ms transition)
   useEffect(() => {
-    if (!isCarousel) return
     const t = setTimeout(() => window.dispatchEvent(new Event('terminal-refit')), 320)
     return () => clearTimeout(t)
-  }, [currentIdx, isCarousel])
+  }, [currentIdx])
+
+  const isSubView = !isStrip
 
   return (
-    <>
-      {/* Desktop carousel — Morning | Agents | Timeline */}
-      <div className={`relative h-full overflow-hidden ${!isCarousel ? 'hidden' : ''}`}>
-        <CarouselNav activeView={activeView} />
-        {CAROUSEL.map((viewId, i) => (
-          <CarouselPane
+    <div className="relative h-full w-full overflow-hidden">
+      {/* One horizontal strip — all views slide the same way */}
+      <div className="relative h-full overflow-hidden">
+        {EDITORIAL.has(activeView) && <EditorialNav activeView={activeView} />}
+        {STRIP.map((viewId, i) => (
+          <StripPane
             key={viewId}
             viewId={viewId}
             active={activeView === viewId}
@@ -176,31 +135,29 @@ function ViewRouter() {
             {viewId === 'morning' && <MorningView />}
             {viewId === 'agents' && <SessionsView />}
             {viewId === 'timeline' && <TimelineView />}
-          </CarouselPane>
+            {viewId === 'todos' && <TodosView />}
+            {viewId === 'terminal' && <AgentView />}
+            {viewId === 'settings' && <SettingsView />}
+          </StripPane>
         ))}
       </div>
 
-      {/* Terminal — persistent overlay (stays mounted once visited) */}
-      <PersistentView active={activeView === 'terminal'} fullBleed swipeDir={swipeDir}>
-        <AgentView />
-      </PersistentView>
-
-      {/* Non-persistent, non-carousel views — standard mount/unmount */}
-      {!isCarousel && activeView !== 'terminal' && (
-        <div className={`max-w-3xl mx-auto px-8 py-10 overflow-y-auto h-full ${
+      {/* Sub-views overlay on top (rollup detail, state, etc.) */}
+      {isSubView && (
+        <div key={activeView} className={`absolute inset-0 z-10 bg-ax-base ${
           swipeDir === 'right' ? 'animate-slide-right'
           : swipeDir === 'left' ? 'animate-slide-left'
           : 'animate-fade-in'
         }`}>
-          {activeView === 'rollup-detail' && <RollupDetailView />}
-          {activeView === 'state' && <StateView />}
-          {activeView === 'decisions' && <DecisionsView />}
-          {activeView === 'todos' && <TodosView />}
-          {activeView === 'settings' && <SettingsView />}
-          {activeView === 'onboarding' && <OnboardingView />}
+          <div className="max-w-3xl mx-auto px-8 py-10 overflow-y-auto h-full">
+            {activeView === 'rollup-detail' && <RollupDetailView />}
+            {activeView === 'state' && <StateView />}
+            {activeView === 'decisions' && <DecisionsView />}
+            {activeView === 'onboarding' && <OnboardingView />}
+          </div>
         </div>
       )}
-    </>
+    </div>
   )
 }
 

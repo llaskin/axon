@@ -3,13 +3,15 @@ import { useUIStore, type ViewId } from '@/store/uiStore'
 import { useProjectStore } from '@/store/projectStore'
 
 const CAROUSEL: ViewId[] = ['morning', 'agents', 'timeline']
+const NAV_VIEWS: ViewId[] = ['morning', 'agents', 'timeline', 'todos', 'terminal', 'settings']
 
 /**
  * Global keyboard shortcuts:
- * - Cmd+Left/Right: slide between carousel desktops
+ * - Cmd+Left/Right: navigate between sidebar views
  * - Cmd+Up/Down: switch projects (vertical)
  * - Cmd+K: toggle command palette
- * - Cmd+1-5: switch views
+ * - Cmd+1-6: switch views
+ * - Cmd+Shift+T: jump to Tasks
  */
 export function useKeyboardShortcuts(onTogglePalette: () => void) {
   const setView = useUIStore((s) => s.setView)
@@ -25,14 +27,14 @@ export function useKeyboardShortcuts(onTogglePalette: () => void) {
         return
       }
 
-      // Cmd+Left/Right: slide carousel desktops
+      // Cmd+Left/Right: navigate between sidebar views
       if (meta && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault()
         const active = useUIStore.getState().activeView
-        const idx = CAROUSEL.indexOf(active)
-        if (idx < 0) return // not on a carousel view
+        const idx = NAV_VIEWS.indexOf(active)
+        if (idx < 0) return
         const next = e.key === 'ArrowLeft' ? idx - 1 : idx + 1
-        if (next >= 0 && next < CAROUSEL.length) setView(CAROUSEL[next])
+        if (next >= 0 && next < NAV_VIEWS.length) setView(NAV_VIEWS[next])
         return
       }
 

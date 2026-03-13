@@ -165,6 +165,12 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             >
               <item.icon size={collapsed ? 18 : 16} strokeWidth={1.5} aria-hidden="true" />
               {!collapsed && <span className="text-small">{item.label}</span>}
+              {!collapsed && item.id === 'todos' && (
+                <span className="ml-auto flex items-center gap-0.5" aria-hidden="true">
+                  <kbd className="font-mono text-[9px] opacity-40 bg-white/5 px-1 py-px rounded leading-none">&#8679;</kbd>
+                  <kbd className="font-mono text-[9px] opacity-40 bg-white/5 px-1 py-px rounded leading-none">T</kbd>
+                </span>
+              )}
             </button>
           )
         })}

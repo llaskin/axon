@@ -42,11 +42,32 @@ export function OnboardingView() {
   const [userContext, setUserContext] = useState('')
   const [genesisContent, setGenesisContent] = useState('')
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
+  const { projects, activeProject } = useProjectStore()
 
   const goTo = useCallback((next: OnboardingStep, dir: 'forward' | 'back' = 'forward') => {
     setDirection(dir)
     setStep(next)
   }, [])
+
+  // Resume genesis for existing project that hasn't completed it
+  const resumeChecked = useRef(false)
+  useEffect(() => {
+    if (resumeChecked.current) return
+    if (!activeProject) return
+    const proj = projects.find(p => p.name === activeProject)
+    if (proj && proj.episodeCount === 0 && proj.path) {
+      resumeChecked.current = true
+      // Project exists but genesis never completed — skip to genesis step
+      setSelectedRepo({
+        name: proj.name,
+        path: proj.path,
+        remote: '',
+        commitCount: 0,
+        lastActivity: '',
+      })
+      setStep('genesis')
+    }
+  }, [activeProject, projects])
 
   return (
     <div className="animate-fade-in-up">

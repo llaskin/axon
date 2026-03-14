@@ -1,6 +1,6 @@
 import type { Plugin } from 'vite'
 import { readdir, readFile } from 'fs/promises'
-import { existsSync, writeFileSync, renameSync, mkdirSync, appendFileSync, readFileSync } from 'fs'
+import { existsSync, writeFileSync, renameSync, mkdirSync, appendFileSync, readFileSync, rmSync } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { spawn, execSync } from 'child_process'
@@ -232,7 +232,7 @@ export function axonDevApi(): Plugin {
               try {
                 const patch = JSON.parse(body)
                 const raw = readFileSync(configPath, 'utf-8')
-                const cfg = parseYaml(raw) as Record<string, unknown>
+                const cfg = parseYaml(raw, { uniqueKeys: false }) as Record<string, unknown>
 
                 // Merge top-level scalars
                 if (patch.status !== undefined) cfg.status = patch.status
@@ -274,6 +274,45 @@ export function axonDevApi(): Plugin {
                 res.end(JSON.stringify({ error: String(e) }))
               }
             })
+            return
+          }
+
+          // DELETE /api/axon/projects/:name?mode=archive|delete
+          const deleteMatch = req.url.match(/^\/api\/axon\/projects\/([^/?]+)(?:\?|$)/)
+          if (deleteMatch && req.method === 'DELETE') {
+            const project = decodeURIComponent(deleteMatch[1])
+            const mode = new URL(req.url, 'http://localhost').searchParams.get('mode') || 'archive'
+            const wsPath = join(AXON_HOME, 'workspaces', project)
+            try {
+              if (!existsSync(wsPath)) {
+                res.writeHead(404, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: 'Project not found' }))
+                return
+              }
+              if (mode === 'delete') {
+                rmSync(wsPath, { recursive: true, force: true })
+              } else {
+                // Archive: update status in config.yaml
+                const configPath = join(wsPath, 'config.yaml')
+                const raw = readFileSync(configPath, 'utf-8')
+                try {
+                  const cfg = parseYaml(raw) as Record<string, unknown>
+                  cfg.status = 'archived'
+                  const tmpPath = configPath + '.tmp.' + Date.now()
+                  writeFileSync(tmpPath, stringifyYaml(cfg, { lineWidth: 0 }))
+                  renameSync(tmpPath, configPath)
+                } catch {
+                  // YAML parse failed (e.g. duplicate keys) — regex fallback
+                  const patched = raw.replace(/^status:\s*.+$/m, 'status: archived')
+                  writeFileSync(configPath, patched)
+                }
+              }
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ ok: true }))
+            } catch (e) {
+              res.writeHead(500, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: String(e) }))
+            }
             return
           }
 

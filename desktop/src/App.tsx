@@ -13,6 +13,7 @@ import { AgentView } from '@/views/AgentView'
 import { SessionsView } from '@/views/SessionsView'
 import { TodosView } from '@/views/TodosView'
 import { useUIStore, type ViewId } from '@/store/uiStore'
+import { useProjectStore } from '@/store/projectStore'
 
 /* ── Horizontal strip ────────────────────────────────────────── */
 
@@ -101,9 +102,22 @@ function EditorialNav({ activeView }: { activeView: ViewId }) {
 
 /* ── View router ─────────────────────────────────────────────── */
 
+const ALLOWED_UNINITIALIZED = new Set<ViewId>(['onboarding', 'settings', 'terminal'])
+
 function ViewRouter() {
   const activeView = useUIStore(s => s.activeView)
+  const setView = useUIStore(s => s.setView)
   const swipeDir = useUIStore(s => s.viewSwipeDirection)
+  const { projects, activeProject } = useProjectStore()
+
+  // Genesis guard: redirect to onboarding if project hasn't completed genesis
+  useEffect(() => {
+    if (!activeProject) return
+    const proj = projects.find(p => p.name === activeProject)
+    if (proj && proj.episodeCount === 0 && !ALLOWED_UNINITIALIZED.has(activeView)) {
+      setView('onboarding')
+    }
+  }, [activeProject, activeView, projects, setView])
 
   // Strip index tracking
   const stripIdx = STRIP.indexOf(activeView)

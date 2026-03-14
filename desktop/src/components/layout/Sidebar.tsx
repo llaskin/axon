@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useProjects } from '@/hooks/useProjects'
 import { useUIStore, type ViewId } from '@/store/uiStore'
-import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare } from 'lucide-react'
+import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare, ChevronRight, Archive } from 'lucide-react'
 
 const mainNav: { id: ViewId; label: string; icon: typeof Clock }[] = [
   { id: 'morning', label: 'Morning', icon: Coffee },
@@ -29,6 +29,13 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const { activeView, setView, theme, toggleTheme, sidebarOpen, toggleSidebar } = useUIStore()
   const today = new Date().toISOString().split('T')[0]
   const collapsed = !sidebarOpen
+
+  const activeProjectData = projects.find(p => p.name === activeProject)
+  const isUninitialized = activeProjectData ? activeProjectData.episodeCount === 0 : false
+
+  const activeProjects = projects.filter(p => p.status !== 'archived')
+  const archivedProjects = projects.filter(p => p.status === 'archived')
+  const [showArchived, setShowArchived] = useState(false)
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const shortcutsRef = useRef<HTMLDivElement>(null)
@@ -109,7 +116,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             <Plus size={14} strokeWidth={1.5} aria-hidden="true" />
             <span className="text-small">New Project</span>
           </button>
-          {projects.map((p) => {
+          {activeProjects.map((p) => {
             const isToday = p.lastRollup === today
             return (
               <button
@@ -137,6 +144,38 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
               </button>
             )
           })}
+
+          {/* Archived projects — collapsible */}
+          {archivedProjects.length > 0 && (
+            <>
+              <button
+                onClick={() => setShowArchived(v => !v)}
+                className="w-full text-left px-3 py-1.5 mt-1 flex items-center gap-2 text-[var(--ax-text-on-dark-muted)] hover:text-[var(--ax-text-on-dark)] transition-colors
+                  focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)] rounded-lg"
+              >
+                <ChevronRight size={12} className={`transition-transform duration-200 ${showArchived ? 'rotate-90' : ''}`} />
+                <Archive size={12} strokeWidth={1.5} />
+                <span className="font-mono text-micro uppercase tracking-wider">Archived ({archivedProjects.length})</span>
+              </button>
+              {showArchived && archivedProjects.map((p) => (
+                <button
+                  key={p.name}
+                  onClick={() => setActiveProject(p.name)}
+                  aria-label={`Switch to archived project ${p.name}`}
+                  aria-pressed={activeProject === p.name}
+                  className={`w-full text-left px-3 py-2 rounded-lg mb-0.5 flex items-center gap-3 transition-all duration-150
+                    focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]
+                    ${activeProject === p.name
+                      ? 'bg-white/10 text-[var(--ax-text-on-dark)] border-l-2 border-l-[var(--ax-brand-primary)]'
+                      : 'text-[var(--ax-text-on-dark-muted)] opacity-50 hover:opacity-70 hover:bg-white/5 border-l-2 border-l-transparent'
+                    }`}
+                >
+                  <span className="w-2 h-2 rounded-full shrink-0 bg-ax-text-tertiary" aria-hidden="true" />
+                  <span className="font-mono text-small truncate">{p.name}</span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
 
@@ -168,18 +207,22 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
         )}
         {mainNav.map((item) => {
           const isActive = activeView === item.id || (item.id === 'timeline' && ['rollup-detail', 'state', 'decisions'].includes(activeView))
+          const disabled = isUninitialized
           return (
             <button
               key={item.id}
-              onClick={() => setView(item.id)}
+              onClick={() => !disabled && setView(item.id)}
               aria-label={item.label}
               aria-current={isActive ? 'page' : undefined}
+              aria-disabled={disabled}
               className={`w-full text-left rounded-lg mb-1 flex items-center transition-all duration-150
                 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]
                 ${collapsed ? 'justify-center p-2' : 'px-3 py-2 gap-3'}
-                ${isActive
-                  ? `bg-white/10 text-[var(--ax-text-on-dark)] ${collapsed ? '' : 'border-l-2 border-l-[var(--ax-brand-primary)]'}`
-                  : `text-[var(--ax-text-on-dark-muted)] hover:bg-white/5 hover:text-[var(--ax-text-on-dark)] ${collapsed ? '' : 'border-l-2 border-l-transparent'}`
+                ${disabled
+                  ? 'opacity-30 cursor-not-allowed'
+                  : isActive
+                    ? `bg-white/10 text-[var(--ax-text-on-dark)] ${collapsed ? '' : 'border-l-2 border-l-[var(--ax-brand-primary)]'}`
+                    : `text-[var(--ax-text-on-dark-muted)] hover:bg-white/5 hover:text-[var(--ax-text-on-dark)] ${collapsed ? '' : 'border-l-2 border-l-transparent'}`
                 }`}
             >
               <item.icon size={collapsed ? 18 : 16} strokeWidth={1.5} aria-hidden="true" />

@@ -78,8 +78,8 @@ rollup:
 timezone: $(date +%Z)
 EOF
 
-# Append user_context if provided via env var
-if [[ -n "${USER_CONTEXT:-}" ]]; then
+# Append user_context if provided via env var (only if not already present)
+if [[ -n "${USER_CONTEXT:-}" ]] && ! grep -q "^user_context:" "$WORKSPACE/config.yaml" 2>/dev/null; then
     echo "" >> "$WORKSPACE/config.yaml"
     echo "# Who you are in relation to this project and what you're trying to get out of it" >> "$WORKSPACE/config.yaml"
     echo "user_context: |" >> "$WORKSPACE/config.yaml"

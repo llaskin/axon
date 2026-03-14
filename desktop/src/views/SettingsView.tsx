@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { parse as parseYaml } from 'yaml'
 import { useProjectStore } from '@/store/projectStore'
+import { useUIStore } from '@/store/uiStore'
 import { useBackend } from '@/providers/DataProvider'
 import { formatDate } from '@/lib/utils'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 interface ProjectConfig {
   project: string
@@ -110,9 +112,11 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export function SettingsView() {
-  const { projects, activeProject, setProjects } = useProjectStore()
+  const { projects, activeProject, setProjects, setActiveProject } = useProjectStore()
+  const setView = useUIStore(s => s.setView)
   const backend = useBackend()
   const [config, setConfig] = useState<ProjectConfig | null>(null)
+  const [showRemoveDialog, setShowRemoveDialog] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -214,6 +218,24 @@ export function SettingsView() {
   }
 
   const activeProjectData = projects.find(p => p.name === activeProject)
+  const handleRemoveProject = async (mode: string) => {
+    if (!activeProject) return
+    setShowRemoveDialog(false)
+    try {
+      await fetch(`/api/axon/projects/${encodeURIComponent(activeProject)}?mode=${mode}`, { method: 'DELETE' })
+      const updated = await backend.getProjects()
+      setProjects(updated)
+      const remaining = updated.filter(p => p.status === 'active')
+      if (remaining.length > 0) {
+        setActiveProject(remaining[0].name)
+      } else {
+        setView('onboarding')
+      }
+    } catch {
+      // Silent fail
+    }
+  }
+
   const contextDirty = config ? contextDraft.trim() !== config.userContext : false
 
   if (loading) {
@@ -412,6 +434,49 @@ export function SettingsView() {
           ))}
         </div>
       </SettingsCard>
+
+      {/* Project Actions */}
+      <SettingsCard title="Project Actions" className="mt-5 animate-fade-in-up">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-small text-ax-text-primary">Archive project</p>
+              <p className="text-micro text-ax-text-tertiary">Hide from sidebar, keep all data</p>
+            </div>
+            <button
+              onClick={() => handleRemoveProject('archive')}
+              className="font-mono text-micro px-3 py-1.5 rounded-lg bg-ax-sunken text-ax-text-secondary border border-ax-border-subtle hover:bg-ax-sunken/80 transition-colors"
+            >
+              Archive
+            </button>
+          </div>
+          <div className="border-t border-ax-border-subtle" />
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-small text-ax-error">Delete project</p>
+              <p className="text-micro text-ax-text-tertiary">Permanently remove all Axon data</p>
+            </div>
+            <button
+              onClick={() => setShowRemoveDialog(true)}
+              className="font-mono text-micro px-3 py-1.5 rounded-lg bg-ax-error/10 text-ax-error border border-ax-error/20 hover:bg-ax-error/20 transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </SettingsCard>
+
+      {showRemoveDialog && (
+        <ConfirmDialog
+          title={`Delete ${activeProject}?`}
+          message="This will permanently remove all Axon data for this project — rollups, state, dendrites, and todos. This cannot be undone."
+          options={[
+            { label: 'Delete everything', value: 'delete', variant: 'danger' },
+          ]}
+          onSelect={handleRemoveProject}
+          onCancel={() => setShowRemoveDialog(false)}
+        />
+      )}
     </div>
   )
 }

@@ -120,20 +120,28 @@ export function SettingsView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Selected project for settings (defaults to active, can browse others)
+  const [selectedProject, setSelectedProject] = useState<string | null>(activeProject)
+
+  // Sync selected when active project changes externally
+  useEffect(() => {
+    setSelectedProject(activeProject)
+  }, [activeProject])
+
   // User context editing state
   const [contextDraft, setContextDraft] = useState('')
   const [contextSaving, setContextSaving] = useState(false)
   const contextLoaded = useRef(false)
 
   const loadConfig = useCallback(() => {
-    if (!activeProject) {
+    if (!selectedProject) {
       setConfig(null)
       setLoading(false)
       return
     }
     setLoading(true)
     setError(null)
-    backend.getConfig(activeProject)
+    backend.getConfig(selectedProject)
       .then(content => {
         const parsed = parseConfig(content)
         setConfig(parsed)
@@ -147,55 +155,52 @@ export function SettingsView() {
         setError(e instanceof Error ? e.message : 'Failed to load config')
         setLoading(false)
       })
-  }, [activeProject, backend])
+  }, [selectedProject, backend])
 
   useEffect(() => {
     contextLoaded.current = false
     loadConfig()
-  }, [activeProject, loadConfig])
+  }, [selectedProject, loadConfig])
 
   const handleDendriteToggle = async (name: string, enabled: boolean) => {
-    if (!config || !activeProject) return
-    // Optimistic update
+    if (!config || !selectedProject) return
     const prev = { ...config.dendrites[name] }
     setConfig({ ...config, dendrites: { ...config.dendrites, [name]: { ...prev, enabled } } })
     try {
-      await patchConfig(activeProject, { dendrites: { [name]: { enabled } } })
+      await patchConfig(selectedProject, { dendrites: { [name]: { enabled } } })
     } catch {
-      // Revert on error
       setConfig(c => c ? { ...c, dendrites: { ...c.dendrites, [name]: prev } } : c)
     }
   }
 
   const handleAutoCollectToggle = async (enabled: boolean) => {
-    if (!config || !activeProject) return
+    if (!config || !selectedProject) return
     const prev = config.rollup.autoCollect
     setConfig({ ...config, rollup: { ...config.rollup, autoCollect: enabled } })
     try {
-      await patchConfig(activeProject, { rollup: { auto_collect: enabled } })
+      await patchConfig(selectedProject, { rollup: { auto_collect: enabled } })
     } catch {
       setConfig(c => c ? { ...c, rollup: { ...c.rollup, autoCollect: prev } } : c)
     }
   }
 
   const handleContextWindowChange = async (value: number) => {
-    if (!config || !activeProject) return
+    if (!config || !selectedProject) return
     const prev = config.rollup.contextWindow
     setConfig({ ...config, rollup: { ...config.rollup, contextWindow: value } })
     try {
-      await patchConfig(activeProject, { rollup: { context_window: value } })
+      await patchConfig(selectedProject, { rollup: { context_window: value } })
     } catch {
       setConfig(c => c ? { ...c, rollup: { ...c.rollup, contextWindow: prev } } : c)
     }
   }
 
   const handleStatusChange = async (status: string) => {
-    if (!config || !activeProject) return
+    if (!config || !selectedProject) return
     const prev = config.status
     setConfig({ ...config, status })
     try {
-      await patchConfig(activeProject, { status })
-      // Refresh project list so sidebar reflects the change
+      await patchConfig(selectedProject, { status })
       const updated = await backend.getProjects()
       setProjects(updated)
     } catch {
@@ -204,11 +209,11 @@ export function SettingsView() {
   }
 
   const handleContextSave = async () => {
-    if (!activeProject) return
+    if (!selectedProject) return
     setContextSaving(true)
     try {
       const value = contextDraft.trim()
-      await patchConfig(activeProject, { user_context: value || null })
+      await patchConfig(selectedProject, { user_context: value || null })
       setConfig(c => c ? { ...c, userContext: value } : c)
     } catch {
       // Silent fail — user can retry
@@ -217,26 +222,29 @@ export function SettingsView() {
     }
   }
 
-  const activeProjectData = projects.find(p => p.name === activeProject)
+  const selectedProjectData = projects.find(p => p.name === selectedProject)
   const handleRemoveProject = async (mode: string) => {
-    if (!activeProject) return
+    if (!selectedProject) return
     setShowRemoveDialog(false)
     try {
-      await fetch(`/api/axon/projects/${encodeURIComponent(activeProject)}?mode=${mode}`, { method: 'DELETE' })
+      await fetch(`/api/axon/projects/${encodeURIComponent(selectedProject)}?mode=${mode}`, { method: 'DELETE' })
       const updated = await backend.getProjects()
       setProjects(updated)
       const remaining = updated.filter(p => p.status === 'active')
-      if (remaining.length > 0) {
-        setActiveProject(remaining[0].name)
-      } else {
-        setView('onboarding')
+      if (selectedProject === activeProject) {
+        if (remaining.length > 0) {
+          setActiveProject(remaining[0].name)
+        } else {
+          setView('onboarding')
+        }
       }
+      setSelectedProject(remaining[0]?.name ?? null)
     } catch {
       // Silent fail
     }
   }
 
-  const contextDirty = config ? contextDraft.trim() !== config.userContext : false
+  const contextDirty = config ? contextDraft.trim() !== (config.userContext || '') : false
 
   if (loading) {
     return (
@@ -261,7 +269,7 @@ export function SettingsView() {
     )
   }
 
-  if (!config || !activeProject) {
+  if (!config || !selectedProject) {
     return (
       <div className="text-center py-20">
         <p className="font-serif italic text-h3 text-ax-text-tertiary mb-2">No project selected</p>
@@ -272,13 +280,29 @@ export function SettingsView() {
 
   return (
     <div>
-      <header className="mb-8">
+      <header className="mb-6">
         <h1 className="font-serif italic text-display text-ax-text-primary tracking-tight">
           Settings
         </h1>
-        <p className="text-body text-ax-text-secondary mt-2">
-          Configuration for <span className="font-mono">{activeProject}</span>
-        </p>
+
+        {/* Project tab selector */}
+        {projects.length > 1 && (
+          <div className="flex items-center gap-1 mt-3 overflow-x-auto pb-1">
+            {projects.filter(p => p.status !== 'archived').map(p => (
+              <button
+                key={p.name}
+                onClick={() => setSelectedProject(p.name)}
+                className={`font-mono text-micro px-3 py-1 rounded-full whitespace-nowrap transition-all duration-150
+                  ${selectedProject === p.name
+                    ? 'bg-ax-brand/15 text-ax-brand border border-ax-brand/30'
+                    : 'text-ax-text-tertiary hover:text-ax-text-secondary hover:bg-ax-sunken border border-transparent'
+                  }`}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       {/* Project Info */}
@@ -316,20 +340,20 @@ export function SettingsView() {
       </SettingsCard>
 
       {/* Stats */}
-      {activeProjectData && (
+      {selectedProjectData && (
         <SettingsCard title="Stats" className="mb-5 animate-fade-in-up">
           <div className="grid grid-cols-3 gap-4">
             <div className="text-center">
-              <div className="font-mono text-h3 text-ax-text-primary">{activeProjectData.episodeCount}</div>
+              <div className="font-mono text-h3 text-ax-text-primary">{selectedProjectData.episodeCount}</div>
               <div className="text-micro text-ax-text-tertiary">Episodes</div>
             </div>
             <div className="text-center">
-              <div className="font-mono text-h3 text-ax-text-primary">{activeProjectData.openLoopCount}</div>
+              <div className="font-mono text-h3 text-ax-text-primary">{selectedProjectData.openLoopCount}</div>
               <div className="text-micro text-ax-text-tertiary">Open Loops</div>
             </div>
             <div className="text-center">
               <div className="font-mono text-h3 text-ax-text-primary">
-                {activeProjectData.lastRollup ? formatDate(activeProjectData.lastRollup) : '—'}
+                {selectedProjectData.lastRollup ? formatDate(selectedProjectData.lastRollup) : '—'}
               </div>
               <div className="text-micro text-ax-text-tertiary">Last Rollup</div>
             </div>
@@ -423,7 +447,7 @@ export function SettingsView() {
                   p.status === 'paused' ? 'bg-ax-warning' : 'bg-ax-text-tertiary'
                 }`} />
                 <span className={`font-mono text-body ${
-                  p.name === activeProject ? 'text-ax-text-primary font-medium' : 'text-ax-text-secondary'
+                  p.name === selectedProject ? 'text-ax-text-primary font-medium' : 'text-ax-text-secondary'
                 }`}>{p.name}</span>
               </div>
               <div className="flex items-center gap-3">
@@ -468,7 +492,7 @@ export function SettingsView() {
 
       {showRemoveDialog && (
         <ConfirmDialog
-          title={`Delete ${activeProject}?`}
+          title={`Delete ${selectedProject}?`}
           message="This will permanently remove all Axon data for this project — rollups, state, dendrites, and todos. This cannot be undone."
           options={[
             { label: 'Delete everything', value: 'delete', variant: 'danger' },

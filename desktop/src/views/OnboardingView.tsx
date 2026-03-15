@@ -731,6 +731,8 @@ function GenesisProgress({ repo, userContext, onComplete }: {
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const contentRef = useRef('')
+  const onCompleteRef = useRef(onComplete)
+  onCompleteRef.current = onComplete
   const startTime = useRef(Date.now())
   const logEndRef = useRef<HTMLDivElement>(null)
 
@@ -754,8 +756,11 @@ function GenesisProgress({ repo, userContext, onComplete }: {
     if (timer) setPhase(timer.phase)
   }, [elapsed, phase])
 
-  // Start genesis
+  // Start genesis — ref guard prevents double-fire in strict mode
+  const genesisStarted = useRef(false)
   useEffect(() => {
+    if (genesisStarted.current) return
+    genesisStarted.current = true
     let cancelled = false
 
     const run = async () => {
@@ -806,7 +811,7 @@ function GenesisProgress({ repo, userContext, onComplete }: {
                   setPhase('done')
                   // Small delay for the animation to feel right
                   setTimeout(() => {
-                    if (!cancelled) onComplete(contentRef.current)
+                    if (!cancelled) onCompleteRef.current(contentRef.current)
                   }, 1500)
                 }
               } else if (event.type === 'error') {
@@ -822,7 +827,8 @@ function GenesisProgress({ repo, userContext, onComplete }: {
 
     run()
     return () => { cancelled = true }
-  }, [repo, onComplete])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo.name, repo.path])
 
   // Auto-scroll logs
   useEffect(() => {

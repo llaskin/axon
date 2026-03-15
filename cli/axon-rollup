@@ -272,33 +272,35 @@ rm -f "$CLAUDE_STDERR"
 ROLLUP_TEXT="$RAW_TEXT"
 
 # Strip preamble — find the first YAML frontmatter delimiter
-if ! echo "$ROLLUP_TEXT" | head -1 | grep -q "^---"; then
+# Use printf + read to get first line without SIGPIPE from pipefail
+FIRST_LINE="${ROLLUP_TEXT%%$'\n'*}"
+if [[ "$FIRST_LINE" != "---" ]]; then
     echo "  ⚠ Stripping preamble from Claude output..."
-    ROLLUP_TEXT=$(echo "$ROLLUP_TEXT" | sed -n '/^---$/,$p')
+    ROLLUP_TEXT=$(sed -n '/^---$/,$p' <<< "$ROLLUP_TEXT")
 fi
 
 # Unwrap code-fenced frontmatter and stray separators
 # Strategy: find the line "type: rollup" and work backwards to the --- before it
-if echo "$ROLLUP_TEXT" | grep -q '```'; then
+if grep -q '```' <<< "$ROLLUP_TEXT"; then
     echo "  ⚠ Unwrapping code-fenced frontmatter..."
-    ROLLUP_TEXT=$(echo "$ROLLUP_TEXT" | sed '/^```\(yaml\)\{0,1\}$/d')
+    ROLLUP_TEXT=$(sed '/^```\(yaml\)\{0,1\}$/d' <<< "$ROLLUP_TEXT")
 fi
 # Find the --- that immediately precedes "type: rollup" — that's the real frontmatter start
 # Then take everything from that --- onwards
-FRONTMATTER_LINE=$(echo "$ROLLUP_TEXT" | grep -n "^type: rollup" | head -1 | cut -d: -f1)
+FRONTMATTER_LINE=$(grep -n "^type: rollup" <<< "$ROLLUP_TEXT" | head -1 | cut -d: -f1) || true
 if [[ -n "$FRONTMATTER_LINE" ]] && [[ "$FRONTMATTER_LINE" -gt 1 ]]; then
     # Walk backwards from "type: rollup" to find the opening ---
     SEARCH_START=$((FRONTMATTER_LINE - 3))
     [[ "$SEARCH_START" -lt 1 ]] && SEARCH_START=1
-    START_LINE=$(echo "$ROLLUP_TEXT" | sed -n "${SEARCH_START},$((FRONTMATTER_LINE - 1))p" | grep -n "^---$" | tail -1 | cut -d: -f1)
+    START_LINE=$(sed -n "${SEARCH_START},$((FRONTMATTER_LINE - 1))p" <<< "$ROLLUP_TEXT" | grep -n "^---$" | tail -1 | cut -d: -f1) || true
     if [[ -n "$START_LINE" ]]; then
         ACTUAL_START=$(( SEARCH_START + START_LINE - 1 ))
-        ROLLUP_TEXT=$(echo "$ROLLUP_TEXT" | tail -n +"$ACTUAL_START")
+        ROLLUP_TEXT=$(tail -n +"$ACTUAL_START" <<< "$ROLLUP_TEXT")
     fi
 fi
 
 # Validate frontmatter exists after cleanup
-TRIMMED=$(echo "$ROLLUP_TEXT" | sed '/^$/d' | head -1)
+TRIMMED=$(sed '/^$/d' <<< "$ROLLUP_TEXT" | head -1)
 if [[ "$TRIMMED" != "---" ]]; then
     echo "FATAL: Rollup doesn't contain YAML frontmatter (first line: ${TRIMMED:0:80})"
     echo "  Claude output meta-commentary instead of the rollup document."
@@ -361,8 +363,9 @@ rm -f "$CLAUDE_STDERR2"
 
 # Strip preamble from state output
 if [[ -n "$NEW_STATE" ]] && [[ "$NEW_STATE" != "null" ]]; then
-    if ! echo "$NEW_STATE" | head -1 | grep -q "^---"; then
-        NEW_STATE=$(echo "$NEW_STATE" | sed -n '/^---$/,$p')
+    STATE_FIRST="${NEW_STATE%%$'\n'*}"
+    if [[ "$STATE_FIRST" != "---" ]]; then
+        NEW_STATE=$(sed -n '/^---$/,$p' <<< "$NEW_STATE")
     fi
 fi
 

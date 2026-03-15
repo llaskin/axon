@@ -1,6 +1,24 @@
 import { create } from 'zustand'
 import type { Project } from '@/lib/types'
 
+const ORDER_KEY = 'axon-project-order'
+function loadOrder(): string[] {
+  try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '[]') } catch { return [] }
+}
+function saveOrder(order: string[]) {
+  localStorage.setItem(ORDER_KEY, JSON.stringify(order))
+}
+
+/** Sort projects by saved order, appending any new ones at the end */
+function applyOrder(projects: Project[], order: string[]): Project[] {
+  const orderMap = new Map(order.map((name, i) => [name, i]))
+  return [...projects].sort((a, b) => {
+    const ai = orderMap.get(a.name) ?? Infinity
+    const bi = orderMap.get(b.name) ?? Infinity
+    return ai - bi
+  })
+}
+
 interface ProjectStore {
   projects: Project[]
   activeProject: string | null
@@ -12,6 +30,7 @@ interface ProjectStore {
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   switchProject: (direction: 'left' | 'right') => void
+  reorderProjects: (orderedNames: string[]) => void
 }
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
@@ -20,7 +39,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   loading: true,
   error: null,
   swipeDirection: null,
-  setProjects: (projects) => set({ projects, loading: false, error: null }),
+  setProjects: (projects) => set({ projects: applyOrder(projects, loadOrder()), loading: false, error: null }),
   setActiveProject: (name) => {
     const { projects, activeProject } = get()
     if (name === activeProject) return
@@ -46,5 +65,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ swipeDirection: direction, activeProject: activeProjects[nextIdx].name })
     // Clear swipe direction after animation
     setTimeout(() => set({ swipeDirection: null }), 300)
+  },
+  reorderProjects: (orderedNames) => {
+    saveOrder(orderedNames)
+    set({ projects: applyOrder(get().projects, orderedNames) })
   },
 }))

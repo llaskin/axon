@@ -67,7 +67,14 @@ echo "Step 2: Assembling rollup context..."
 
 STATE=$(cat "$WORKSPACE/state.md")
 
-# Get recent episodes for continuity (last 3)
+# Read context_window from config (default 10)
+CONTEXT_WINDOW=10
+if [[ -f "$WORKSPACE/config.yaml" ]]; then
+    CW=$(grep -A5 '^rollup:' "$WORKSPACE/config.yaml" | grep 'context_window:' | awk '{print $2}')
+    [[ -n "$CW" && "$CW" =~ ^[0-9]+$ ]] && CONTEXT_WINDOW="$CW"
+fi
+
+# Get recent episodes for continuity
 RECENT_EPISODES=""
 while IFS= read -r ep; do
     [[ -z "$ep" ]] && continue
@@ -77,7 +84,7 @@ while IFS= read -r ep; do
 $(head -60 "$ep")
 ...
 "
-done < <(find "$WORKSPACE/episodes" -name "*.md" -print 2>/dev/null | sort -r | head -3)
+done < <(find "$WORKSPACE/episodes" -name "*.md" -print 2>/dev/null | sort -r | head -"$CONTEXT_WINDOW")
 
 # Get recent dendrites (from today's collection)
 DENDRITES=""

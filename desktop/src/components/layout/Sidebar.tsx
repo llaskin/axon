@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useProjects } from '@/hooks/useProjects'
+import { useProjectStore } from '@/store/projectStore'
 import { useUIStore, type ViewId } from '@/store/uiStore'
-import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare, ChevronRight, Archive, GitBranch } from 'lucide-react'
+import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare, ChevronRight, Archive, GitBranch, GripVertical } from 'lucide-react'
 
 const mainNav: { id: ViewId; label: string; icon: typeof Clock }[] = [
   { id: 'morning', label: 'Morning', icon: Coffee },
@@ -38,6 +39,62 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const activeProjects = projects.filter(p => p.status !== 'archived')
   const archivedProjects = projects.filter(p => p.status === 'archived')
   const [showArchived, setShowArchived] = useState(false)
+
+  const reorderProjects = useProjectStore(s => s.reorderProjects)
+
+  // Drag-to-reorder state
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [overIdx, setOverIdx] = useState<number | null>(null)
+  const dragStartY = useRef(0)
+  const dragThreshold = useRef(false)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  const getDragOrder = useCallback(() => {
+    if (dragIdx === null || overIdx === null || dragIdx === overIdx) return activeProjects
+    const items = [...activeProjects]
+    const [moved] = items.splice(dragIdx, 1)
+    items.splice(overIdx, 0, moved)
+    return items
+  }, [activeProjects, dragIdx, overIdx])
+
+  const handlePointerDown = useCallback((e: React.PointerEvent, idx: number) => {
+    // Only left button
+    if (e.button !== 0) return
+    dragStartY.current = e.clientY
+    dragThreshold.current = false
+    setDragIdx(idx)
+    setOverIdx(idx)
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  }, [])
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (dragIdx === null || !listRef.current) return
+    const dy = Math.abs(e.clientY - dragStartY.current)
+    if (!dragThreshold.current && dy < 5) return
+    dragThreshold.current = true
+
+    // Determine which index we're over based on Y position
+    const items = listRef.current.querySelectorAll('[data-drag-item]')
+    let closest = dragIdx
+    let minDist = Infinity
+    items.forEach((el, i) => {
+      const rect = el.getBoundingClientRect()
+      const center = rect.top + rect.height / 2
+      const dist = Math.abs(e.clientY - center)
+      if (dist < minDist) { minDist = dist; closest = i }
+    })
+    setOverIdx(closest)
+  }, [dragIdx])
+
+  const handlePointerUp = useCallback(() => {
+    if (dragIdx !== null && overIdx !== null && dragThreshold.current && dragIdx !== overIdx) {
+      const reordered = getDragOrder()
+      reorderProjects(reordered.map(p => p.name))
+    }
+    setDragIdx(null)
+    setOverIdx(null)
+    dragThreshold.current = false
+  }, [dragIdx, overIdx, getDragOrder, reorderProjects])
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const shortcutsRef = useRef<HTMLDivElement>(null)
@@ -118,21 +175,32 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             <Plus size={13} strokeWidth={1.5} aria-hidden="true" />
             <span className="text-micro">New Project</span>
           </button>
-          {activeProjects.map((p) => {
+          <div ref={listRef}>
+          {(dragIdx !== null && dragThreshold.current ? getDragOrder() : activeProjects).map((p, i) => {
             const isToday = p.lastRollup === today
+            const isDragging = dragIdx !== null && dragThreshold.current
+            const isDraggedItem = isDragging && overIdx !== null &&
+              p.name === activeProjects[dragIdx!]?.name
             return (
               <button
                 key={p.name}
-                onClick={() => setActiveProject(p.name)}
+                data-drag-item
+                onClick={() => { if (!dragThreshold.current) setActiveProject(p.name) }}
+                onPointerDown={(e) => handlePointerDown(e, activeProjects.findIndex(ap => ap.name === p.name))}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
                 aria-label={`Switch to ${p.name}${p.openLoopCount > 0 ? `, ${p.openLoopCount} open loops` : ''}`}
                 aria-pressed={activeProject === p.name}
-                className={`w-full text-left px-3 py-1.5 rounded-lg mb-0.5 flex items-center gap-2.5 transition-all duration-150
+                className={`w-full text-left px-3 py-1.5 rounded-lg mb-0.5 flex items-center gap-2.5 transition-all duration-150 select-none group
                   focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]
+                  ${isDraggedItem ? 'bg-white/15 shadow-lg scale-[1.02]' : ''}
                   ${activeProject === p.name
                     ? 'bg-white/10 text-[var(--ax-text-on-dark)] border-l-2 border-l-[var(--ax-brand-primary)]'
                     : 'text-[var(--ax-text-on-dark-muted)] hover:bg-white/5 hover:text-[var(--ax-text-on-dark)] border-l-2 border-l-transparent'
                   }`}
+                style={{ cursor: isDragging ? 'grabbing' : undefined }}
               >
+                <GripVertical size={10} className="shrink-0 opacity-0 group-hover:opacity-30 transition-opacity" aria-hidden="true" />
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                   p.status === 'active' ? 'bg-ax-accent' :
                   p.status === 'paused' ? 'bg-ax-warning' : 'bg-ax-text-tertiary'
@@ -146,6 +214,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
               </button>
             )
           })}
+          </div>
 
           {/* Archived projects — collapsible */}
           {archivedProjects.length > 0 && (

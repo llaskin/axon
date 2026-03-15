@@ -27,7 +27,7 @@ function parseConfig(content: string): ProjectConfig {
     timezone: '',
     userContext: '',
     dendrites: {},
-    rollup: { autoCollect: true, contextWindow: 3, model: 'claude-opus-4-6' },
+    rollup: { autoCollect: true, contextWindow: 10, model: 'claude-opus-4-6' },
   }
   if (!content) return defaults
 
@@ -468,7 +468,7 @@ export function SettingsView() {
               onChange={e => handleContextWindowChange(parseInt(e.target.value))}
               className="font-mono text-small px-2 py-0.5 rounded bg-ax-sunken text-ax-text-primary border-none outline-none cursor-pointer"
             >
-              {[1, 2, 3, 4, 5, 7, 10].map(n => (
+              {[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(n => (
                 <option key={n} value={n}>{n} episodes</option>
               ))}
             </select>

@@ -551,7 +551,6 @@ export function SourceControlView() {
       const result = await res.json()
       setToast({ message: result.message, ok: result.ok })
       if (result.ok) {
-        setShowTagForm(false)
         setTagName('')
         refresh()
       }

@@ -145,8 +145,8 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
               onClick={() => setView('timeline')}
               aria-label="Go to timeline"
             >
-              <img src="/branding/axon-mark-light.png" alt="" className="w-7 h-7 rounded" aria-hidden="true" />
-              <span className="font-serif italic text-h2 text-[var(--ax-text-on-dark)] tracking-tight">axon</span>
+              <img src="/branding/axon-mark-light.png" alt="" className="w-9 h-9 rounded" aria-hidden="true" />
+              <span className="font-serif italic text-display text-[var(--ax-text-on-dark)] tracking-tight">axon</span>
             </button>
             <button
               onClick={toggleSidebar}
@@ -307,9 +307,13 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
           )
         })}
 
-        {/* Separator */}
-        <div className={`border-t border-white/10 ${collapsed ? 'mx-1' : 'mx-2'} my-1.5`} />
+      </nav>
 
+      </div>{/* end middle section */}
+
+      {/* Utility nav — Terminal, Settings — anchored above footer */}
+      <div className={`${collapsed ? 'px-1' : 'px-3'} pb-2`}>
+        <div className={`border-t border-white/10 ${collapsed ? 'mx-1' : 'mx-2'} mb-1.5`} />
         {utilNav.map((item) => {
           const isActive = activeView === item.id
           return (
@@ -331,9 +335,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             </button>
           )
         })}
-      </nav>
-
-      </div>{/* end middle section */}
+      </div>
 
       {/* Footer — horizontal row */}
       <div className={`${collapsed ? 'px-1 flex flex-col items-center gap-1' : 'px-3 flex items-center justify-center gap-1'} pb-4 relative`}>

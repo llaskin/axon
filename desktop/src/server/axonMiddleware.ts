@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile as writeFileAsync } from 'fs/promises'
+import { readdir, readFile } from 'fs/promises'
 import { existsSync, writeFileSync, renameSync, mkdirSync, readFileSync, rmSync, watchFile, unwatchFile } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
@@ -1617,7 +1617,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
       }
 
       // GET /api/axon/sessions?project={name}
-      const sessionsMatch = url.match(/^\/api\/axon\/sessions(\?project=([^&]+))?$/)
+      const sessionsMatch = url.match(/^\/api\/axon\/sessions(\?project=([^&]+))?(&|$)/)
       if (sessionsMatch) {
         const rawProjectName = sessionsMatch[2] ? decodeURIComponent(sessionsMatch[2]) : undefined
         let projectName = rawProjectName

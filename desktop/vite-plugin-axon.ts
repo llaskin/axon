@@ -1,6 +1,6 @@
 import type { Plugin } from 'vite'
 import { readdir, readFile } from 'fs/promises'
-import { existsSync, writeFileSync, renameSync, mkdirSync, appendFileSync, readFileSync, rmSync } from 'fs'
+import { existsSync, writeFileSync, renameSync, mkdirSync, appendFileSync, readFileSync, rmSync, statSync, watchFile, unwatchFile } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { spawn, execSync } from 'child_process'
@@ -437,6 +437,233 @@ export function axonDevApi(): Plugin {
               res.end(JSON.stringify({ ok: true, action, id, ...result }))
             } catch (err) {
               res.statusCode = 404
+              res.end(JSON.stringify({ error: String(err) }))
+            }
+            return
+          }
+
+          // ── JOBS ENDPOINTS (SQLite-backed via jobsDb.ts) ─────
+
+          // GET /api/axon/projects/:name/jobs
+          const jobsGetMatch = req.url.match(/^\/api\/axon\/projects\/([^/]+)\/jobs(\?.*)?$/)
+          if (jobsGetMatch && req.method === 'GET') {
+            const project = decodeURIComponent(jobsGetMatch[1])
+            const params = new URLSearchParams(jobsGetMatch[2]?.slice(1) || '')
+            try {
+              const { listJobs, cleanStaleJobs } = await import('./src/lib/jobsDb')
+              // Auto-clean stale "running" jobs older than 30 minutes
+              cleanStaleJobs(project, 30)
+              const opts: Record<string, unknown> = {}
+              if (params.get('type')) opts.type = params.get('type')
+              if (params.get('status')) opts.status = params.get('status')
+              if (params.get('limit')) opts.limit = parseInt(params.get('limit')!, 10)
+              if (params.get('offset')) opts.offset = parseInt(params.get('offset')!, 10)
+              const items = listJobs(project, opts as Parameters<typeof listJobs>[1])
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ items }))
+            } catch {
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ items: [] }))
+            }
+            return
+          }
+
+          // GET /api/axon/projects/:name/jobs/summary
+          const jobsSummaryMatch = req.url.match(/^\/api\/axon\/projects\/([^/]+)\/jobs\/summary(\?.*)?$/)
+          if (jobsSummaryMatch && req.method === 'GET') {
+            const project = decodeURIComponent(jobsSummaryMatch[1])
+            const params = new URLSearchParams(jobsSummaryMatch[2]?.slice(1) || '')
+            try {
+              const { jobSummary, cleanStaleJobs } = await import('./src/lib/jobsDb')
+              cleanStaleJobs(project, 30)
+              const type = params.get('type') as 'rollup' | 'collect' | 'bridge' | undefined
+              const summary = jobSummary(project, type || undefined)
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify(summary))
+            } catch {
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ total: 0, success: 0, failed: 0, running: 0, total_cost: 0, avg_duration_s: 0 }))
+            }
+            return
+          }
+
+          // GET /api/axon/projects/:name/cron — cron/launchd status
+          const cronMatch = req.url.match(/^\/api\/axon\/projects\/([^/]+)\/cron$/)
+          if (cronMatch && req.method === 'GET') {
+            const project = decodeURIComponent(cronMatch[1])
+            try {
+              const plistPath = join(homedir(), 'Library', 'LaunchAgents', `com.axon.rollup.${project}.plist`)
+              if (existsSync(plistPath)) {
+                const content = readFileSync(plistPath, 'utf-8')
+                const hourMatch = content.match(/<key>Hour<\/key>\s*<integer>(\d+)<\/integer>/)
+                const minMatch = content.match(/<key>Minute<\/key>\s*<integer>(\d+)<\/integer>/)
+                const hour = hourMatch ? parseInt(hourMatch[1]) : null
+                const minute = minMatch ? parseInt(minMatch[1]) : null
+                // Check if loaded
+                let loaded = false
+                try {
+                  const out = execSync(`launchctl list 2>/dev/null | grep "com.axon.rollup.${project}"`, { encoding: 'utf-8' })
+                  loaded = out.trim().length > 0
+                } catch { /* not loaded */ }
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ installed: true, loaded, hour, minute, schedule: `${String(hour ?? 0).padStart(2, '0')}:${String(minute ?? 0).padStart(2, '0')}` }))
+              } else {
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ installed: false, loaded: false }))
+              }
+            } catch {
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ installed: false, loaded: false }))
+            }
+            return
+          }
+
+          // POST /api/axon/projects/:name/cron — install/remove cron
+          const cronPostMatch = req.url.match(/^\/api\/axon\/projects\/([^/]+)\/cron$/)
+          if (cronPostMatch && req.method === 'POST') {
+            const project = decodeURIComponent(cronPostMatch[1])
+            const body = await new Promise<string>((resolve) => {
+              let data = ''
+              req.on('data', (chunk: Buffer) => { data += chunk.toString() })
+              req.on('end', () => resolve(data))
+            })
+            const { action, time } = JSON.parse(body) as { action: 'install' | 'remove'; time?: string }
+            try {
+              // Read project_path from config.yaml
+              const configPath = join(homedir(), '.axon', 'workspaces', project, 'config.yaml')
+              let projectPath = ''
+              if (existsSync(configPath)) {
+                const cfg = parseYaml(readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+                projectPath = String(cfg.project_path || '')
+              }
+
+              const cliDir = resolve(__dirname, 'cli')
+              const cronScript = join(cliDir, 'axon-cron')
+              const env = { ...process.env, PROJECT: project, PROJECT_PATH: projectPath, CRON_TIME: time || '02:00' }
+              delete env.CLAUDECODE
+
+              const result = execSync(`bash "${cronScript}" ${action}`, { encoding: 'utf-8', env, timeout: 10000 })
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: true, output: result.trim() }))
+            } catch (err) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: String(err) }))
+            }
+            return
+          }
+
+          // GET /api/axon/projects/:name/jobs/:id/watch — SSE live feed of a running job's Claude session
+          const jobWatchMatch = req.url.match(/^\/api\/axon\/projects\/([^/]+)\/jobs\/(\d+)\/watch$/)
+          if (jobWatchMatch && req.method === 'GET') {
+            const project = decodeURIComponent(jobWatchMatch[1])
+            const jobId = parseInt(jobWatchMatch[2], 10)
+
+            try {
+              const { getJob } = await import('./src/lib/jobsDb')
+              const job = getJob(project, jobId)
+              if (!job) {
+                res.statusCode = 404
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'Job not found' }))
+                return
+              }
+
+              // Get session_id from job meta
+              const sessionId = job.meta?.session_id as string | undefined
+              if (!sessionId) {
+                res.statusCode = 404
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'No session_id in job meta' }))
+                return
+              }
+
+              // Find the JSONL file: ~/.claude/projects/{folderId}/{sessionId}.jsonl
+              // folderId is project_path with / replaced by -
+              const configPath = join(AXON_HOME, 'workspaces', project, 'config.yaml')
+              let projectPath = ''
+              if (existsSync(configPath)) {
+                const cfg = parseYaml(readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+                projectPath = String(cfg.project_path || '')
+              }
+
+              if (!projectPath) {
+                res.statusCode = 404
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'No project_path in config' }))
+                return
+              }
+
+              const folderId = projectPath.replace(/\//g, '-')
+              const jsonlPath = join(homedir(), '.claude', 'projects', folderId, `${sessionId}.jsonl`)
+
+              if (!existsSync(jsonlPath)) {
+                res.statusCode = 404
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'Session JSONL not found', path: jsonlPath }))
+                return
+              }
+
+              // SSE stream
+              res.setHeader('Content-Type', 'text/event-stream')
+              res.setHeader('Cache-Control', 'no-cache')
+              res.setHeader('Connection', 'keep-alive')
+
+              // Track position by line count to avoid re-sending
+              let linesSent = 0
+              const isRunning = job.status === 'running'
+
+              const sendNewLines = () => {
+                try {
+                  const content = readFileSync(jsonlPath, 'utf-8')
+                  const lines = content.split('\n').filter(l => l.trim())
+                  if (lines.length <= linesSent) return
+
+                  for (let i = linesSent; i < lines.length; i++) {
+                    try {
+                      const msg = JSON.parse(lines[i]) as Record<string, unknown>
+                      const events = classifyAgentMessage(msg)
+                      for (const evt of events) {
+                        res.write(`data: ${JSON.stringify(evt)}\n\n`)
+                      }
+                    } catch { /* skip malformed lines */ }
+                  }
+                  linesSent = lines.length
+                } catch { /* file may be gone */ }
+              }
+
+              // Send all existing content first
+              sendNewLines()
+
+              if (isRunning) {
+                // Watch for new lines
+                const pollInterval = 1000 // 1s polling
+                watchFile(jsonlPath, { interval: pollInterval }, () => {
+                  sendNewLines()
+
+                  // Check if job is now finished
+                  try {
+                    const currentJob = getJob(project, jobId)
+                    if (currentJob && currentJob.status !== 'running') {
+                      res.write(`data: ${JSON.stringify({ kind: 'done', id: `done-${Date.now()}`, status: currentJob.status })}\n\n`)
+                      unwatchFile(jsonlPath)
+                      res.end()
+                    }
+                  } catch { /* continue watching */ }
+                })
+
+                // Cleanup on disconnect
+                req.on('close', () => {
+                  unwatchFile(jsonlPath)
+                })
+              } else {
+                // Job already finished — send done event and close
+                res.write(`data: ${JSON.stringify({ kind: 'done', id: `done-${Date.now()}`, status: job.status })}\n\n`)
+                res.end()
+              }
+            } catch (err) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify({ error: String(err) }))
             }
             return

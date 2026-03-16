@@ -95,15 +95,7 @@ function GitHubTab() {
             </div>
           ) : readme ? (
             <div
-              className="prose prose-sm max-w-none
-                prose-headings:font-serif prose-headings:italic prose-headings:text-ax-text-primary
-                prose-p:text-ax-text-secondary prose-p:text-small prose-p:leading-relaxed
-                prose-a:text-ax-brand prose-a:no-underline hover:prose-a:underline
-                prose-code:font-mono prose-code:text-micro prose-code:bg-ax-sunken prose-code:px-1 prose-code:py-0.5 prose-code:rounded
-                prose-pre:bg-ax-sunken prose-pre:rounded-lg prose-pre:border prose-pre:border-ax-border-subtle
-                prose-li:text-ax-text-secondary prose-li:text-small
-                prose-strong:text-ax-text-primary
-                prose-img:rounded-lg"
+              className="readme-prose"
               dangerouslySetInnerHTML={{ __html: readme }}
             />
           ) : (

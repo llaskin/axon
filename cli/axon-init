@@ -26,8 +26,14 @@ echo ""
 # Initialize git in AXON_HOME if first project
 if [[ ! -d "$AXON_HOME/.git" ]]; then
     echo "First project — initializing Axon home..."
-    read -p "  Version your Axon memory with git? [Y/n] " -n 1 -r REPLY
-    echo ""
+    if [[ -t 0 ]]; then
+        # Interactive — ask the user
+        read -p "  Version your Axon memory with git? [Y/n] " -n 1 -r REPLY
+        echo ""
+    else
+        # Non-interactive (background spawn) — default to yes
+        REPLY="Y"
+    fi
     if [[ -z "$REPLY" ]] || [[ "$REPLY" =~ ^[Yy]$ ]]; then
         git -C "$AXON_HOME" init --quiet
         cat > "$AXON_HOME/.gitignore" << 'GITIGNORE'
@@ -38,10 +44,12 @@ workspaces/*/episodes/.tmp.*
 GITIGNORE
         echo "  ✓ Git initialized in $AXON_HOME"
 
-        read -p "  Add a remote for backup/sync? (paste URL or press Enter to skip) " REMOTE_URL
-        if [[ -n "$REMOTE_URL" ]]; then
-            git -C "$AXON_HOME" remote add origin "$REMOTE_URL"
-            echo "  ✓ Remote 'origin' added"
+        if [[ -t 0 ]]; then
+            read -p "  Add a remote for backup/sync? (paste URL or press Enter to skip) " REMOTE_URL
+            if [[ -n "$REMOTE_URL" ]]; then
+                git -C "$AXON_HOME" remote add origin "$REMOTE_URL"
+                echo "  ✓ Remote 'origin' added"
+            fi
         fi
     fi
 fi

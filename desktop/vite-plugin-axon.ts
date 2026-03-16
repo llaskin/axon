@@ -29,7 +29,7 @@ export function axonDevApi(): Plugin {
       // Mount API middleware
       server.middlewares.use(createAxonMiddleware({
         axonHome: AXON_HOME,
-        cliDir: resolve(__dirname, 'cli'),
+        cliDir: resolve(__dirname, '..', 'cli'),
       }))
     }
   }

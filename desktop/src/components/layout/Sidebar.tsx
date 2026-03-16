@@ -164,8 +164,8 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
       <div className="flex-1 flex flex-col justify-center min-h-0 py-4">
 
       {/* Project Switcher */}
-      {!collapsed && (
-        <div className="px-3 pb-16" role="group" aria-label="Project switcher">
+      {!collapsed && (<>
+        <div className="px-3 pb-3 mx-2 pt-3 rounded-xl bg-white/[0.03]" role="group" aria-label="Project switcher">
           <div className="text-micro font-mono uppercase tracking-widest text-[var(--ax-text-on-dark-muted)] px-2 mb-2" aria-hidden="true">
             Projects
           </div>
@@ -253,26 +253,26 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             </>
           )}
 
-          {/* Project dots */}
-          {projects.filter(p => p.status === 'active').length > 1 && (
-            <div className="flex justify-center gap-1.5 pt-3" aria-label="Project position">
-              {projects.filter(p => p.status === 'active').map((p) => (
-                <button
-                  key={p.name}
-                  onClick={() => setActiveProject(p.name)}
-                  aria-label={`Switch to ${p.name}`}
-                  className={`w-1.5 h-1.5 rounded-full transition-all duration-200
-                    focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]
-                    ${activeProject === p.name
-                      ? 'bg-[var(--ax-text-on-dark)] scale-125'
-                      : 'bg-[var(--ax-text-on-dark-muted)] hover:bg-[var(--ax-text-on-dark)] opacity-40 hover:opacity-70'
-                    }`}
-                />
-              ))}
-            </div>
-          )}
         </div>
-      )}
+        {/* Project dots */}
+        {projects.filter(p => p.status === 'active').length > 1 && (
+          <div className="flex justify-center gap-1.5 pt-3 pb-12" aria-label="Project position">
+            {projects.filter(p => p.status === 'active').map((p) => (
+              <button
+                key={p.name}
+                onClick={() => setActiveProject(p.name)}
+                aria-label={`Switch to ${p.name}`}
+                className={`w-1.5 h-1.5 rounded-full transition-all duration-200
+                  focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]
+                  ${activeProject === p.name
+                    ? 'bg-[var(--ax-text-on-dark)] scale-125'
+                    : 'bg-[var(--ax-text-on-dark-muted)] hover:bg-[var(--ax-text-on-dark)] opacity-40 hover:opacity-70'
+                  }`}
+              />
+            ))}
+          </div>
+        )}
+      </>)}
 
       {/* Navigation */}
       <nav className={`${collapsed ? 'px-1' : 'px-3'} pt-4 pb-2`} aria-label="Main views">

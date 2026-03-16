@@ -10,6 +10,14 @@ export interface Project {
   lastRollup: string | null
   episodeCount: number
   openLoopCount: number
+  genesisStatus?: 'running' | 'complete' | 'failed'
+}
+
+export interface DiscoveredRepo {
+  name: string
+  path: string
+  remote: string
+  lastActivity: string
 }
 
 export interface RollupFrontmatter {

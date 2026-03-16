@@ -1,8 +1,12 @@
-import { readdir, readFile } from 'fs/promises'
+import { readdir, readFile, writeFile as writeFileAsync } from 'fs/promises'
 import { existsSync, writeFileSync, renameSync, mkdirSync, readFileSync, rmSync, watchFile, unwatchFile } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { spawn, execSync } from 'child_process'
+
+/* ── Discovery cache ── */
+let discoveryCache: { repos: { name: string; path: string; remote: string; commitCount: number; lastActivity: string }[]; timestamp: number } | null = null
+const DISCOVERY_CACHE_TTL = 60_000
 import type { IncomingMessage, ServerResponse } from 'http'
 import { spawnTerminal, hasTerminal, killTerminal, killAllTerminals } from '../lib/terminalManager'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
@@ -238,7 +242,18 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
             episodeCount = eps.filter(f => f.endsWith('.md')).length
           } catch {}
 
-          projects.push({ name, path: projectPath, status, createdAt, lastRollup, episodeCount, openLoopCount })
+          // Check genesis status for uninitialized projects
+          let genesisStatus: string | undefined
+          if (episodeCount === 0) {
+            try {
+              const lock = JSON.parse(readFileSync(join(wsPath, '.genesis-lock'), 'utf-8'))
+              genesisStatus = lock.status // 'running' | 'complete' | 'failed'
+            } catch {
+              // No lock file — genesis hasn't been attempted
+            }
+          }
+
+          projects.push({ name, path: projectPath, status, createdAt, lastRollup, episodeCount, openLoopCount, ...(genesisStatus ? { genesisStatus } : {}) })
         }
 
         res.end(JSON.stringify(projects))
@@ -1060,6 +1075,12 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
 
       // GET /api/axon/discover-repos
       if (url === '/api/axon/discover-repos') {
+        // Return cached results if fresh
+        if (discoveryCache && Date.now() - discoveryCache.timestamp < DISCOVERY_CACHE_TTL) {
+          res.end(JSON.stringify(discoveryCache.repos))
+          return
+        }
+
         const home = homedir()
         const scanDirs = ['Github', 'Projects', 'Developer', 'Code', 'repos', 'src', 'work']
           .map(d => join(home, d))
@@ -1092,6 +1113,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           }
         }
 
+        discoveryCache = { repos, timestamp: Date.now() }
         res.end(JSON.stringify(repos))
         return
       }
@@ -1603,6 +1625,143 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         } catch (err) {
           res.end(JSON.stringify({ sessions: [], indexStatus: { totalSessions: 0, analyticsIndexed: 0, ftsIndexed: 0, ready: false }, error: String(err) }))
         }
+        return
+      }
+
+      // POST /api/axon/init-quick — create workspace + run genesis in background
+      if (url === '/api/axon/init-quick' && req.method === 'POST') {
+        const body = await new Promise<string>((resolve) => {
+          let data = ''
+          req.on('data', (chunk: Buffer) => { data += chunk.toString() })
+          req.on('end', () => resolve(data))
+        })
+
+        const { projectName, projectPath } = JSON.parse(body) as {
+          projectName: string
+          projectPath: string
+        }
+
+        const wsPath = join(AXON_HOME, 'workspaces', projectName)
+
+        // If workspace already exists, return early
+        if (existsSync(join(wsPath, 'config.yaml'))) {
+          res.end(JSON.stringify({ name: projectName, status: 'exists' }))
+          return
+        }
+
+        // Create workspace dirs + config.yaml synchronously
+        mkdirSync(join(wsPath, 'episodes'), { recursive: true })
+        mkdirSync(join(wsPath, 'dendrites'), { recursive: true })
+        mkdirSync(join(wsPath, 'mornings'), { recursive: true })
+        writeFileSync(join(wsPath, 'stream.md'), '')
+
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+        const configYaml = [
+          `project: ${projectName}`,
+          `project_path: ${projectPath}`,
+          `created_at: ${new Date().toISOString()}`,
+          `status: active`,
+          ``,
+          `dendrites:`,
+          `  git-log:`,
+          `    enabled: true`,
+          `    max_commits: 200`,
+          `  file-tree:`,
+          `    enabled: true`,
+          `  session-summary:`,
+          `    enabled: false`,
+          `  todo-state:`,
+          `    enabled: true`,
+          `  manual-note:`,
+          `    enabled: true`,
+          ``,
+          `rollup:`,
+          `  auto_collect: true`,
+          `  context_window: 3`,
+          `  model: claude-opus-4-6`,
+          ``,
+          `timezone: ${tz}`,
+        ].join('\n')
+
+        writeFileSync(join(wsPath, 'config.yaml'), configYaml + '\n')
+
+        // Write genesis lock
+        writeFileSync(join(wsPath, '.genesis-lock'), JSON.stringify({ status: 'running', startedAt: new Date().toISOString() }))
+
+        // Spawn axon-init in background (detached)
+        const cleanEnv = { ...process.env }
+        delete cleanEnv.CLAUDECODE
+        delete cleanEnv.CLAUDE_CODE_SESSION
+
+        const cliDir = config.cliDir || resolve(process.cwd(), '..', 'cli')
+        const initScript = join(cliDir, 'axon-init')
+
+        const child = spawn(initScript, [], {
+          stdio: 'ignore',
+          detached: true,
+          env: { ...cleanEnv, PROJECT: projectName, PROJECT_PATH: projectPath, AXON_HOME },
+          cwd: projectPath,
+        })
+
+        child.on('close', (code) => {
+          try {
+            writeFileSync(
+              join(wsPath, '.genesis-lock'),
+              JSON.stringify(code === 0
+                ? { status: 'complete' }
+                : { status: 'failed', error: `Process exited with code ${code}` })
+            )
+          } catch {}
+        })
+
+        child.on('error', (err) => {
+          try {
+            writeFileSync(
+              join(wsPath, '.genesis-lock'),
+              JSON.stringify({ status: 'failed', error: err.message })
+            )
+          } catch {}
+        })
+
+        child.unref()
+
+        // Invalidate discovery cache
+        discoveryCache = null
+
+        res.end(JSON.stringify({ name: projectName, status: 'running' }))
+        return
+      }
+
+      // GET /api/axon/init-status?project=name
+      if (url.startsWith('/api/axon/init-status')) {
+        const params = new URL(url, 'http://localhost').searchParams
+        const project = params.get('project')
+        if (!project) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: 'Missing project parameter' }))
+          return
+        }
+
+        const wsPath = join(AXON_HOME, 'workspaces', project)
+        const lockPath = join(wsPath, '.genesis-lock')
+        const genesisPath = join(wsPath, 'episodes', '0000_genesis.md')
+
+        let status = 'none'
+        let error: string | undefined
+
+        if (existsSync(lockPath)) {
+          try {
+            const lock = JSON.parse(readFileSync(lockPath, 'utf-8'))
+            status = lock.status
+            error = lock.error
+          } catch {
+            status = 'unknown'
+          }
+        } else if (existsSync(genesisPath)) {
+          status = 'complete'
+        }
+
+        res.end(JSON.stringify({ status, ...(error ? { error } : {}) }))
         return
       }
 

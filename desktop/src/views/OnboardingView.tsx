@@ -3,6 +3,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useBackend } from '@/providers/DataProvider'
 import { useDebugStore } from '@/store/debugStore'
+import { useDiscoveryStore } from '@/store/discoveryStore'
 import { Folder, GitBranch, Zap, ArrowRight, ArrowLeft, Check, Search, Globe, HardDrive, Plus, AlertCircle } from 'lucide-react'
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -112,6 +113,9 @@ export function OnboardingView() {
             onSelect={(repo) => {
               setSelectedRepo(repo)
               goTo('axon-context', 'forward')
+            }}
+            onQuickInit={(repo) => {
+              useDiscoveryStore.getState().initRepo({ name: repo.name, path: repo.path, remote: repo.remote, lastActivity: repo.lastActivity })
             }}
           />
         )}
@@ -259,7 +263,7 @@ function StepIndicator({ current }: { current: OnboardingStep }) {
 
 // ─── Step 1: Repo Selector ──────────────────────────────────────
 
-function RepoSelector({ onSelect }: { onSelect: (repo: DiscoveredRepo) => void }) {
+function RepoSelector({ onSelect, onQuickInit }: { onSelect: (repo: DiscoveredRepo) => void; onQuickInit?: (repo: DiscoveredRepo) => void }) {
   const [repos, setRepos] = useState<DiscoveredRepo[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -447,7 +451,20 @@ function RepoSelector({ onSelect }: { onSelect: (repo: DiscoveredRepo) => void }
                   )}
                 </div>
               </div>
-              <ArrowRight size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-ax-brand opacity-0 group-hover:opacity-100 transition-opacity" />
+              {onQuickInit && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onQuickInit(repo) }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5
+                    font-mono text-[10px] px-2.5 py-1 rounded-lg
+                    bg-ax-brand text-white opacity-0 group-hover:opacity-100
+                    hover:bg-ax-brand/90 transition-all duration-200
+                    focus:outline-none focus-visible:ring-2 focus-visible:ring-ax-brand"
+                >
+                  <Zap size={10} />
+                  Quick Init
+                </button>
+              )}
+              {!onQuickInit && <ArrowRight size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-ax-brand opacity-0 group-hover:opacity-100 transition-opacity" />}
             </button>
           ))
         )}

@@ -4,6 +4,7 @@ import { useProjects } from '@/hooks/useProjects'
 import { useProjectStore } from '@/store/projectStore'
 import { useUIStore, type ViewId } from '@/store/uiStore'
 import { useDebugStore } from '@/store/debugStore'
+import { useDiscoveredRepos } from '@/hooks/useDiscoveredRepos'
 import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare, GitBranch, GripVertical, HelpCircle, X } from 'lucide-react'
 
 const HINT_STORAGE_KEY = 'axon-shortcut-hints-dismissed'
@@ -46,6 +47,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const [showArchived, setShowArchived] = useState(false)
 
   const reorderProjects = useProjectStore(s => s.reorderProjects)
+  const { repos: discoveredRepos } = useDiscoveredRepos()
 
   // Drag-to-reorder state
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -265,6 +267,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
           {(dragIdx !== null && dragThreshold.current ? getDragOrder() : (showArchived ? [...activeProjects, ...archivedProjects] : activeProjects)).map((p, _i) => {
             const isToday = p.lastRollup === today
             const isArchived = p.status === 'archived'
+            const isGenesis = p.episodeCount === 0 && p.genesisStatus === 'running'
             const isDragging = dragIdx !== null && dragThreshold.current
             const isDraggedItem = isDragging && overIdx !== null &&
               p.name === activeProjects[dragIdx!]?.name
@@ -295,15 +298,18 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
               >
                 {!isArchived && <GripVertical size={10} className="shrink-0 opacity-0 group-hover:opacity-30 transition-opacity" aria-hidden="true" />}
                 <span className={`w-2 h-2 rounded-full shrink-0 ${
+                  isGenesis ? 'bg-ax-brand animate-pulse-dot' :
                   p.status === 'active' ? 'bg-ax-accent' :
                   p.status === 'paused' ? 'bg-ax-warning' : 'bg-ax-text-tertiary'
-                } ${isToday ? 'animate-pulse-dot' : ''}`} aria-hidden="true" />
+                } ${isToday && !isGenesis ? 'animate-pulse-dot' : ''}`} aria-hidden="true" />
                 <span className="font-mono text-micro truncate">{p.name}</span>
-                {p.openLoopCount > 0 && (
+                {isGenesis ? (
+                  <span className="ml-auto font-mono text-[9px] text-[var(--ax-brand-primary)] opacity-60">init...</span>
+                ) : p.openLoopCount > 0 ? (
                   <span className="ml-auto font-mono text-micro bg-white/10 px-1.5 py-0.5 rounded" aria-hidden="true">
                     {p.openLoopCount}
                   </span>
-                )}
+                ) : null}
               </button>
             )
           })}
@@ -311,7 +317,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
 
           <button
             onClick={() => setView('onboarding')}
-            aria-label="Add new project"
+            aria-label={`Add new project${discoveredRepos.length > 0 ? ` (${discoveredRepos.length} repos found)` : ''}`}
             className="w-full text-left px-3 py-1.5 rounded-lg mt-1.5 flex items-center gap-2.5 transition-all duration-150
               text-[var(--ax-text-on-dark-muted)] hover:bg-white/5 hover:text-[var(--ax-text-on-dark)]
               border border-dashed border-white/10 hover:border-white/20
@@ -319,6 +325,11 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
           >
             <Plus size={13} strokeWidth={1.5} aria-hidden="true" />
             <span className="text-micro">New Project</span>
+            {discoveredRepos.length > 0 && (
+              <span className="ml-auto font-mono text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-[var(--ax-text-on-dark-muted)]">
+                {discoveredRepos.length}
+              </span>
+            )}
           </button>
         </div>
         {/* Project dots */}

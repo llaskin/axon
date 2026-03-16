@@ -14,6 +14,7 @@ import { SessionsView } from '@/views/SessionsView'
 import { TodosView } from '@/views/TodosView'
 import { SourceControlView } from '@/views/SourceControlView'
 import { AboutView } from '@/views/AboutView'
+import { GenesisProgressView } from '@/views/GenesisProgressView'
 import { IntroSplash } from '@/components/shared/IntroSplash'
 import { PreflightCheck } from '@/components/shared/PreflightCheck'
 import { useUIStore, type ViewId } from '@/store/uiStore'
@@ -106,7 +107,7 @@ function EditorialNav({ activeView }: { activeView: ViewId }) {
 
 /* ── View router ─────────────────────────────────────────────── */
 
-const ALLOWED_UNINITIALIZED = new Set<ViewId>(['onboarding', 'settings', 'terminal'])
+const ALLOWED_UNINITIALIZED = new Set<ViewId>(['onboarding', 'settings', 'terminal', 'genesis-progress', 'source'])
 
 function ViewRouter() {
   const activeView = useUIStore(s => s.activeView)
@@ -114,12 +115,16 @@ function ViewRouter() {
   const swipeDir = useUIStore(s => s.viewSwipeDirection)
   const { projects, activeProject } = useProjectStore()
 
-  // Genesis guard: redirect to onboarding if project hasn't completed genesis
+  // Genesis guard: redirect based on project initialization state
   useEffect(() => {
     if (!activeProject) return
     const proj = projects.find(p => p.name === activeProject)
     if (proj && proj.episodeCount === 0 && !ALLOWED_UNINITIALIZED.has(activeView)) {
-      setView('onboarding')
+      if (proj.genesisStatus === 'running') {
+        setView('genesis-progress')
+      } else {
+        setView('onboarding')
+      }
     }
   }, [activeProject, activeView, projects, setView])
 
@@ -173,6 +178,7 @@ function ViewRouter() {
             {activeView === 'state' && <StateView />}
             {activeView === 'decisions' && <DecisionsView />}
             {activeView === 'onboarding' && <OnboardingView />}
+            {activeView === 'genesis-progress' && <GenesisProgressView />}
             {activeView === 'about' && <AboutView />}
           </div>
         </div>

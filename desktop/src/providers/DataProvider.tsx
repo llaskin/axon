@@ -1,8 +1,10 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
-import type { Project } from '@/lib/types'
+import type { Project, DiscoveredRepo } from '@/lib/types'
 
 export interface Backend {
   getProjects(): Promise<Project[]>
+  discoverRepos(): Promise<DiscoveredRepo[]>
+  initQuick(name: string, path: string): Promise<{ name: string; status: string }>
   getRollups(project: string): Promise<Array<{ filename: string; content: string }>>
   getMornings(project: string): Promise<Array<{ filename: string; content: string }>>
   getState(project: string): Promise<string>
@@ -28,6 +30,20 @@ function createFetchBackend(): Backend {
     async getProjects() {
       const res = await fetch('/api/axon/projects')
       if (!res.ok) throw new Error(`Failed to load projects (${res.status})`)
+      return res.json()
+    },
+    async discoverRepos() {
+      const res = await fetch('/api/axon/discover-repos')
+      if (!res.ok) throw new Error(`Failed to discover repos (${res.status})`)
+      return res.json()
+    },
+    async initQuick(name: string, path: string) {
+      const res = await fetch('/api/axon/init-quick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName: name, projectPath: path }),
+      })
+      if (!res.ok) throw new Error(`Failed to init project (${res.status})`)
       return res.json()
     },
     async getRollups(project: string) {
@@ -64,6 +80,12 @@ async function createTauriBackend(): Promise<Backend> {
   return {
     async getProjects() {
       return invoke<Project[]>('list_projects')
+    },
+    async discoverRepos() {
+      return invoke<DiscoveredRepo[]>('discover_repos')
+    },
+    async initQuick(name: string, path: string) {
+      return invoke<{ name: string; status: string }>('init_quick', { name, path })
     },
     async getRollups(project: string) {
       return invoke<Array<{ filename: string; content: string }>>('list_rollups', { project })
@@ -104,6 +126,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // Create a proxy that lazily resolves the real backend
     const proxy: Backend = {
       getProjects: () => getBackend().then(b => b.getProjects()),
+      discoverRepos: () => getBackend().then(b => b.discoverRepos()),
+      initQuick: (n, p) => getBackend().then(b => b.initQuick(n, p)),
       getRollups: (p) => getBackend().then(b => b.getRollups(p)),
       getMornings: (p) => getBackend().then(b => b.getMornings(p)),
       getState: (p) => getBackend().then(b => b.getState(p)),

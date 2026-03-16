@@ -127,7 +127,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
       {/* Drag region for Electron title bar */}
       <div className="h-8 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       {/* Logo + collapse toggle */}
-      <div className={`flex items-center ${collapsed ? 'justify-center py-3' : 'px-5 py-0'}`}>
+      <div className={`flex items-center ${collapsed ? 'justify-center py-3' : 'px-5 pb-2'}`}>
         {collapsed ? (
           <button
             onClick={toggleSidebar}
@@ -160,16 +160,16 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
         )}
       </div>
 
-      {/* Project Switcher */}
+      {/* Project Switcher — flex-1 to fill middle, centered content */}
       {!collapsed && (
-        <div className="px-3 mb-3" role="group" aria-label="Project switcher">
-          <div className="text-micro font-mono uppercase tracking-widest text-[var(--ax-text-on-dark-muted)] px-2 mb-1.5" aria-hidden="true">
+        <div className="flex-1 flex flex-col justify-center px-3 py-4 min-h-0" role="group" aria-label="Project switcher">
+          <div className="text-micro font-mono uppercase tracking-widest text-[var(--ax-text-on-dark-muted)] px-2 mb-2" aria-hidden="true">
             Projects
           </div>
           <button
             onClick={() => setView('onboarding')}
             aria-label="Add new project"
-            className="w-full text-left px-3 py-1.5 rounded-lg mb-1 flex items-center gap-2.5 transition-all duration-150
+            className="w-full text-left px-3 py-1.5 rounded-lg mb-1.5 flex items-center gap-2.5 transition-all duration-150
               text-[var(--ax-text-on-dark-muted)] hover:bg-white/5 hover:text-[var(--ax-text-on-dark)]
               border border-dashed border-white/10 hover:border-white/20
               focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]"
@@ -177,7 +177,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             <Plus size={13} strokeWidth={1.5} aria-hidden="true" />
             <span className="text-micro">New Project</span>
           </button>
-          <div ref={listRef}>
+          <div ref={listRef} className="overflow-y-auto max-h-[40vh]">
           {(dragIdx !== null && dragThreshold.current ? getDragOrder() : activeProjects).map((p, _i) => {
             const isToday = p.lastRollup === today
             const isDragging = dragIdx !== null && dragThreshold.current
@@ -250,29 +250,30 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             </>
           )}
         </div>
-      )}
 
-      {/* Project dots — macOS Spaces-style indicator */}
-      {!collapsed && projects.filter(p => p.status === 'active').length > 1 && (
-        <div className="flex justify-center gap-1.5 px-3 pb-3" aria-label="Project position">
-          {projects.filter(p => p.status === 'active').map((p) => (
-            <button
-              key={p.name}
-              onClick={() => setActiveProject(p.name)}
-              aria-label={`Switch to ${p.name}`}
-              className={`w-1.5 h-1.5 rounded-full transition-all duration-200
-                focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]
-                ${activeProject === p.name
-                  ? 'bg-[var(--ax-text-on-dark)] scale-125'
-                  : 'bg-[var(--ax-text-on-dark-muted)] hover:bg-[var(--ax-text-on-dark)] opacity-40 hover:opacity-70'
-                }`}
-            />
-          ))}
+          {/* Project dots */}
+          {projects.filter(p => p.status === 'active').length > 1 && (
+            <div className="flex justify-center gap-1.5 pt-3" aria-label="Project position">
+              {projects.filter(p => p.status === 'active').map((p) => (
+                <button
+                  key={p.name}
+                  onClick={() => setActiveProject(p.name)}
+                  aria-label={`Switch to ${p.name}`}
+                  className={`w-1.5 h-1.5 rounded-full transition-all duration-200
+                    focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ax-brand-primary)]
+                    ${activeProject === p.name
+                      ? 'bg-[var(--ax-text-on-dark)] scale-125'
+                      : 'bg-[var(--ax-text-on-dark-muted)] hover:bg-[var(--ax-text-on-dark)] opacity-40 hover:opacity-70'
+                    }`}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Navigation */}
-      <nav className={`${collapsed ? 'px-1' : 'px-3'} flex-1 flex flex-col`} aria-label="Main views">
+      {/* Navigation — anchored at bottom */}
+      <nav className={`${collapsed ? 'px-1' : 'px-3'} pb-2`} aria-label="Main views">
         {!collapsed && (
           <div className="text-micro font-mono uppercase tracking-widest text-[var(--ax-text-on-dark-muted)] px-2 mb-1" aria-hidden="true">
             Views
@@ -305,7 +306,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
         })}
 
         {/* Separator */}
-        <div className={`border-t border-white/10 ${collapsed ? 'mx-1' : 'mx-2'} mt-auto mb-1.5`} />
+        <div className={`border-t border-white/10 ${collapsed ? 'mx-1' : 'mx-2'} my-1.5`} />
 
         {utilNav.map((item) => {
           const isActive = activeView === item.id

@@ -49,10 +49,10 @@ Options:
   --dry-run         Show what would happen without calling Claude
 
 Examples:
-  axon init --project eat-ai-sar-portal --path ~/Github/eat-ai-org/eat-ai-sar-portal
-  axon rollup --project eat-ai-sar-portal
+  axon init --project my-app --path ~/Github/my-app
+  axon rollup --project my-app
   axon morning --all
-  axon morning --project eat-ai-sar-portal
+  axon morning --project my-app
   axon projects
   axon archive --project old-project
   axon todo add "Implement CLAUDE.md bridge" --priority high

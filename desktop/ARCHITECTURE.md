@@ -412,7 +412,7 @@ use tauri_plugin_shell::ShellExt;
 #[tauri::command]
 async fn exec_axon(
     app: AppHandle,
-    args: Vec<String>,  // e.g., ["rollup", "--project", "eat-ai-sar-portal"]
+    args: Vec<String>,  // e.g., ["rollup", "--project", "my-app"]
 ) -> Result<String, String> { ... }
 
 /// Execute an axon command and stream stdout/stderr as events.
@@ -874,7 +874,7 @@ export function useCron(project: string) {
 │          │                                               │
 │ PROJECTS │              MAIN CONTENT                     │
 │          │                                               │
-│ ● eat-ai │  (TimelineView / StateView / MorningView /   │
+│ ● my-app │  (TimelineView / StateView / MorningView /   │
 │   [3]    │   DecisionExplorerView / SettingsView)        │
 │          │                                               │
 │ ● axon   │                                               │

@@ -101,11 +101,8 @@ export function IntroSplash() {
 
   const handleEnded = useCallback(() => {
     setEnded(true)
-    // Wait 2s on final frame, then auto-fade
-    fadeTimerRef.current = setTimeout(() => {
-      dismiss()
-    }, FADE_DELAY_MS)
-  }, [dismiss])
+    // Freeze on final frame — user clicks "Get Started" when ready
+  }, [])
 
   if (!visible) return null
 

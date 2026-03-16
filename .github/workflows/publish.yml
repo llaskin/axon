@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '!desktop-v*'
 
 jobs:
   publish:
@@ -16,6 +17,10 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -15,6 +15,7 @@ import { TodosView } from '@/views/TodosView'
 import { SourceControlView } from '@/views/SourceControlView'
 import { AboutView } from '@/views/AboutView'
 import { IntroSplash } from '@/components/shared/IntroSplash'
+import { PreflightCheck } from '@/components/shared/PreflightCheck'
 import { useUIStore, type ViewId } from '@/store/uiStore'
 import { useProjectStore } from '@/store/projectStore'
 
@@ -187,6 +188,7 @@ export default function App() {
         <ViewRouter />
       </Shell>
       <IntroSplash />
+      <PreflightCheck />
     </DataProvider>
   )
 }

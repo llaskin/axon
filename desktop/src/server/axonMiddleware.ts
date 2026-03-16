@@ -107,6 +107,93 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
     res.setHeader('Content-Type', 'application/json')
 
     try {
+      // GET /api/axon/preflight — system health check for first-run setup
+      if (url === '/api/axon/preflight') {
+        const checks: { id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string; action?: string }[] = []
+
+        // 1. Axon home exists
+        const homeExists = existsSync(AXON_HOME)
+        checks.push({
+          id: 'axon-home',
+          label: 'Axon data directory',
+          status: homeExists ? 'pass' : 'fail',
+          detail: homeExists ? AXON_HOME : `${AXON_HOME} not found`,
+          action: homeExists ? undefined : 'Run axon init to create it',
+        })
+
+        // 2. CLI installed
+        let cliInstalled = false
+        try {
+          execSync('which axon', { stdio: 'pipe' })
+          cliInstalled = true
+        } catch { /* not found */ }
+        checks.push({
+          id: 'cli',
+          label: 'Axon CLI',
+          status: cliInstalled ? 'pass' : 'fail',
+          detail: cliInstalled ? 'axon in PATH' : 'Not found',
+          action: cliInstalled ? undefined : 'npm i -g axon-dev',
+        })
+
+        // 3. Claude CLI
+        let claudeVersion = ''
+        try {
+          claudeVersion = execSync('claude --version 2>/dev/null', { encoding: 'utf-8', stdio: 'pipe' }).trim().split('\n')[0]
+        } catch { /* not found */ }
+        checks.push({
+          id: 'claude',
+          label: 'Claude CLI',
+          status: claudeVersion ? 'pass' : 'warn',
+          detail: claudeVersion || 'Not found',
+          action: claudeVersion ? undefined : 'Install from claude.ai/code',
+        })
+
+        // 4. Git
+        let gitOk = false
+        try {
+          execSync('which git', { stdio: 'pipe' })
+          gitOk = true
+        } catch { /* not found */ }
+        checks.push({
+          id: 'git',
+          label: 'Git',
+          status: gitOk ? 'pass' : 'fail',
+          detail: gitOk ? 'Available' : 'Not found',
+        })
+
+        // 5. Node version
+        const nodeVersion = process.version
+        const nodeMajor = parseInt(nodeVersion.slice(1))
+        checks.push({
+          id: 'node',
+          label: 'Node.js',
+          status: nodeMajor >= 22 ? 'pass' : nodeMajor >= 20 ? 'warn' : 'fail',
+          detail: nodeVersion,
+          action: nodeMajor < 22 ? 'Recommended: Node 22+' : undefined,
+        })
+
+        // 6. Projects exist
+        let projectCount = 0
+        try {
+          const wsDir = join(AXON_HOME, 'workspaces')
+          if (existsSync(wsDir)) {
+            const entries = await readdir(wsDir, { withFileTypes: true })
+            projectCount = entries.filter(e => e.isDirectory()).length
+          }
+        } catch { /* no workspaces */ }
+        checks.push({
+          id: 'projects',
+          label: 'Projects',
+          status: projectCount > 0 ? 'pass' : 'warn',
+          detail: projectCount > 0 ? `${projectCount} project${projectCount !== 1 ? 's' : ''}` : 'None yet',
+          action: projectCount === 0 ? 'Use onboarding to add your first project' : undefined,
+        })
+
+        const allPass = checks.every(c => c.status === 'pass')
+        res.end(JSON.stringify({ ok: allPass, checks }))
+        return
+      }
+
       // GET /api/axon/projects
       if (url === '/api/axon/projects') {
         const wsDir = join(AXON_HOME, 'workspaces')

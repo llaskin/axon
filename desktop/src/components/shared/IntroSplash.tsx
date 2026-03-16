@@ -35,6 +35,7 @@ function sampleEdgeColor(video: HTMLVideoElement): string {
 
 export function IntroSplash() {
   const [visible, setVisible] = useState(() => !localStorage.getItem(STORAGE_KEY))
+  const [ready, setReady] = useState(false) // fade-in trigger
   const [fading, setFading] = useState(false)
   const [ended, setEnded] = useState(false)
   const [bgColor, setBgColor] = useState('#0a0a0a')
@@ -48,6 +49,7 @@ export function IntroSplash() {
   }, [])
 
   const show = useCallback(() => {
+    setReady(false)
     setFading(false)
     setEnded(false)
     setBgColor('#0a0a0a')
@@ -89,10 +91,12 @@ export function IntroSplash() {
     v.playbackRate = PLAYBACK_RATE
   }, [])
 
-  // Sample edge color once first frame renders
+  // Sample edge color once first frame renders, then fade in
   const handleCanPlay = useCallback(() => {
     const v = videoRef.current
     if (v) setBgColor(sampleEdgeColor(v))
+    // Small delay so the background color sets before we fade in
+    requestAnimationFrame(() => setReady(true))
   }, [])
 
   const handleEnded = useCallback(() => {
@@ -115,7 +119,14 @@ export function IntroSplash() {
       }}
     >
       {/* Video at 60% with edge blend into background */}
-      <div className="relative" style={{ width: '60vw', height: '60vh' }}>
+      <div
+        className="relative"
+        style={{
+          width: '60vw', height: '60vh',
+          opacity: ready ? 1 : 0,
+          transition: 'opacity 800ms ease-in',
+        }}
+      >
         <video
           ref={videoRef}
           src="/branding/axon-intro.mp4"

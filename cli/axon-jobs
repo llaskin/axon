@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# axon-jobs — Shell helper for recording job history to jobs.db
+# Usage: source this file, then call axon_job_start/axon_job_finish
+# Or run directly: axon-jobs start <project> <type> | finish <project> <id> <status> [options]
+
+set -euo pipefail
+
+AXON_HOME="${AXON_HOME:-$HOME/.axon}"
+
+# Ensure sqlite3 is available
+if ! command -v sqlite3 &>/dev/null; then
+    echo "WARNING: sqlite3 not found — job tracking disabled" >&2
+    # Define no-op functions so callers don't break
+    axon_job_start() { echo "0"; }
+    axon_job_finish() { :; }
+    return 0 2>/dev/null || exit 0
+fi
+
+_jobs_db_path() {
+    local project="$1"
+    echo "$AXON_HOME/workspaces/$project/jobs.db"
+}
+
+_jobs_ensure_table() {
+    local db="$1"
+    sqlite3 "$db" <<'SQL'
+CREATE TABLE IF NOT EXISTS jobs (
+    id          INTEGER PRIMARY KEY,
+    type        TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'running',
+    error       TEXT,
+    started_at  TEXT    NOT NULL,
+    finished_at TEXT,
+    duration_s  REAL,
+    cost        REAL,
+    episode     TEXT,
+    meta        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(type);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_started ON jobs(started_at);
+SQL
+}
+
+# Start a job — returns the job ID
+# Usage: JOB_ID=$(axon_job_start <project> <type>)
+axon_job_start() {
+    local project="$1"
+    local type="$2"
+    local db
+    db=$(_jobs_db_path "$project")
+    _jobs_ensure_table "$db"
+    local started_at
+    started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    sqlite3 "$db" "INSERT INTO jobs (type, status, started_at) VALUES ('$type', 'running', '$started_at');"
+    sqlite3 "$db" "SELECT last_insert_rowid();"
+}
+
+# Finish a job
+# Usage: axon_job_finish <project> <id> <status> [--error ERR] [--cost USD] [--episode FILE] [--meta JSON]
+axon_job_finish() {
+    local project="$1"
+    local id="$2"
+    local status="$3"
+    shift 3
+
+    local error=""
+    local cost=""
+    local episode=""
+    local meta=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --error)  error="$2"; shift 2 ;;
+            --cost)   cost="$2"; shift 2 ;;
+            --episode) episode="$2"; shift 2 ;;
+            --meta)   meta="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    local db
+    db=$(_jobs_db_path "$project")
+    local finished_at
+    finished_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # Calculate duration via SQLite (avoids macOS date -j format issues)
+    local duration_s=""
+    duration_s=$(sqlite3 "$db" "SELECT CAST((julianday('$finished_at') - julianday(started_at)) * 86400 AS INTEGER) FROM jobs WHERE id = $id;" 2>/dev/null || echo "")
+
+    # Build SET clause
+    local sets="status='$status', finished_at='$finished_at'"
+    [[ -n "$duration_s" ]] && sets+=", duration_s=$duration_s"
+    [[ -n "$error" ]] && sets+=", error='$(echo "$error" | sed "s/'/''/g")'"
+    [[ -n "$cost" ]] && sets+=", cost=$cost"
+    [[ -n "$episode" ]] && sets+=", episode='$(echo "$episode" | sed "s/'/''/g")'"
+    [[ -n "$meta" ]] && sets+=", meta='$(echo "$meta" | sed "s/'/''/g")'"
+
+    sqlite3 "$db" "UPDATE jobs SET $sets WHERE id = $id;"
+}
+
+# Direct CLI usage
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    case "${1:-}" in
+        start)
+            axon_job_start "$2" "$3"
+            ;;
+        finish)
+            axon_job_finish "${@:2}"
+            ;;
+        list)
+            project="${2:-}"
+            db=$(_jobs_db_path "$project")
+            if [[ -f "$db" ]]; then
+                sqlite3 -header -column "$db" "SELECT id, type, status, started_at, duration_s, cost, episode, error FROM jobs ORDER BY id DESC LIMIT ${3:-10};"
+            else
+                echo "No jobs.db for project: $project"
+            fi
+            ;;
+        *)
+            echo "Usage: axon-jobs {start|finish|list} <project> ..."
+            echo "  start  <project> <type>        — Start a job, prints job ID"
+            echo "  finish <project> <id> <status>  — Finish a job [--error E] [--cost N] [--episode F] [--meta JSON]"
+            echo "  list   <project> [limit]        — List recent jobs"
+            ;;
+    esac
+fi

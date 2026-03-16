@@ -4,6 +4,9 @@ on:
   push:
     tags: ['desktop-v*']
 
+permissions:
+  contents: write
+
 jobs:
   build-mac:
     runs-on: macos-latest

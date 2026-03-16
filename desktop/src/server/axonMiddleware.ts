@@ -111,6 +111,14 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
       if (url === '/api/axon/preflight') {
         const checks: { id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string; action?: string }[] = []
 
+        // Electron apps have a restricted PATH — resolve the user's login shell PATH
+        let shellPath = process.env.PATH || ''
+        try {
+          const shell = process.env.SHELL || '/bin/zsh'
+          shellPath = execSync(`${shell} -ilc 'echo $PATH'`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 3000 }).trim()
+        } catch { /* fall back to process.env.PATH */ }
+        const execOpts = { stdio: 'pipe' as const, env: { ...process.env, PATH: shellPath }, timeout: 5000 }
+
         // 1. Axon home exists
         const homeExists = existsSync(AXON_HOME)
         checks.push({
@@ -124,7 +132,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         // 2. CLI installed
         let cliInstalled = false
         try {
-          execSync('which axon', { stdio: 'pipe' })
+          execSync('which axon', execOpts)
           cliInstalled = true
         } catch { /* not found */ }
         checks.push({
@@ -138,7 +146,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         // 3. Claude CLI
         let claudeVersion = ''
         try {
-          claudeVersion = execSync('claude --version 2>/dev/null', { encoding: 'utf-8', stdio: 'pipe' }).trim().split('\n')[0]
+          claudeVersion = execSync('claude --version 2>/dev/null', { ...execOpts, encoding: 'utf-8' }).trim().split('\n')[0]
         } catch { /* not found */ }
         checks.push({
           id: 'claude',
@@ -151,7 +159,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         // 4. Git
         let gitOk = false
         try {
-          execSync('which git', { stdio: 'pipe' })
+          execSync('which git', execOpts)
           gitOk = true
         } catch { /* not found */ }
         checks.push({

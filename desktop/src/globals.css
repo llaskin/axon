@@ -652,6 +652,9 @@ body {
 .readme-prose th, .readme-prose td { border: 1px solid var(--ax-border-subtle); padding: 0.5em 0.75em; text-align: left; }
 .readme-prose th { background: var(--ax-bg-sunken); font-weight: 600; color: var(--ax-text-primary); }
 .readme-prose img { max-width: 100%; border-radius: 8px; margin: 1em 0; }
+/* Hide GitHub's anchor link icons on headings */
+.readme-prose .anchor { display: none; }
+.readme-prose .octicon { display: none; }
 
 /* ================================================
    Agent Terminal — dark block for tool output

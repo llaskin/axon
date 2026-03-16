@@ -39,7 +39,7 @@ export function IntroSplash() {
   const [ended, setEnded] = useState(false)
   const [bgColor, setBgColor] = useState('#0a0a0a')
   const videoRef = useRef<HTMLVideoElement>(null)
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const dismiss = useCallback(() => {
     setFading(true)

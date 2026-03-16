@@ -318,12 +318,6 @@ function nextPatch(tag: string): string {
   return `${m[1]}${m[2]}.${m[3]}.${Number(m[4]) + 1}`
 }
 
-function nextMinor(tag: string): string {
-  const m = tag.match(/^(.*?)(\d+)\.(\d+)\.(\d+)$/)
-  if (!m) return tag
-  return `${m[1]}${m[2]}.${Number(m[3]) + 1}.0`
-}
-
 interface TagSuggestion {
   label: string
   value: string
@@ -491,7 +485,6 @@ export function SourceControlView() {
   const [pulling, setPulling] = useState(false)
   const [confirmPush, setConfirmPush] = useState(false)
   const [toast, setToast] = useState<{ message: string; ok: boolean } | null>(null)
-  const [showTagForm, setShowTagForm] = useState(false)
   const [tagName, setTagName] = useState('')
   const [tagging, setTagging] = useState(false)
 

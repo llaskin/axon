@@ -60,13 +60,11 @@ function fullIndex(): void {
 
 // --- Phase 1: Basic scan ---
 
-function phaseBasicScan(): void {
+/** Scan a single Claude project folder and upsert sessions into DB */
+function scanSingleFolder(folderId: string, preResolved?: { displayName: string; projectPath: string | null }): void {
   const db = getSessionDb()
-
-  const folders = readdirSync(PROJECTS_DIR).filter((f) => {
-    try { return statSync(join(PROJECTS_DIR, f)).isDirectory() }
-    catch { return false }
-  })
+  const projectDir = join(PROJECTS_DIR, folderId)
+  const indexPath = join(projectDir, 'sessions-index.json')
 
   const insertSession = db.prepare(`
     INSERT OR REPLACE INTO sessions (
@@ -88,135 +86,168 @@ function phaseBasicScan(): void {
     }
   })
 
-  for (const folderId of folders) {
-    const projectDir = join(PROJECTS_DIR, folderId)
-    const indexPath = join(projectDir, 'sessions-index.json')
+  // Derive project display name + path from index (with filesystem fallback)
+  const resolved = preResolved || resolveProjectFromFolderId(folderId)
+  let projectName = resolved.displayName
+  let projectPath: string | null = resolved.projectPath
 
-    // Derive project display name + path from index (with filesystem fallback)
-    const resolved = resolveProjectFromFolderId(folderId)
-    let projectName = resolved.displayName
-    let projectPath: string | null = resolved.projectPath
+  const indexedSessionIds = new Set<string>()
+  const rows: unknown[][] = []
 
-    const indexedSessionIds = new Set<string>()
-    const rows: unknown[][] = []
-
-    if (existsSync(indexPath)) {
-      try {
-        const data = JSON.parse(readFileSync(indexPath, 'utf-8'))
-        const entries = data.entries || []
-
-        // Extract project path from first entry with one
-        for (const e of entries) {
-          if (e.projectPath) {
-            projectPath = e.projectPath
-            projectName = e.projectPath.split('/').filter(Boolean).pop() || projectName
-            break
-          }
-        }
-
-        for (const e of entries) {
-          const sid = e.sessionId as string
-          indexedSessionIds.add(sid)
-
-          // Check if JSONL exists + get stat for change detection
-          const jsonlPath = join(projectDir, `${sid}.jsonl`)
-          let jsonlSize: number | null = null
-          let jsonlMtime: string | null = null
-          if (existsSync(jsonlPath)) {
-            try {
-              const st = statSync(jsonlPath)
-              jsonlSize = st.size
-              jsonlMtime = st.mtime.toISOString()
-            } catch { /* ignore */ }
-          }
-
-          // Check if we already have this session with same file stats (skip re-index)
-          const existing = db.prepare(
-            'SELECT jsonl_size, jsonl_mtime, analytics_indexed FROM sessions WHERE id = ?'
-          ).get(sid) as { jsonl_size: number | null; jsonl_mtime: string | null; analytics_indexed: number } | undefined
-
-          if (existing && existing.jsonl_size === jsonlSize && existing.jsonl_mtime === jsonlMtime) {
-            continue // Already indexed and file unchanged
-          }
-
-          rows.push([
-            sid,
-            folderId,
-            e.projectPath || projectPath,
-            projectName,
-            (e.firstPrompt as string)?.slice(0, 200) || null,
-            e.customTitle || null,
-            e.summary || null,
-            e.messageCount || 0,
-            e.gitBranch || null,
-            e.created || null,
-            e.modified || null,
-            new Date().toISOString(),
-            jsonlSize,
-            jsonlMtime,
-            e.isSidechain ? 1 : 0,
-            // Preserve analytics_indexed if we're updating
-            existing?.analytics_indexed ?? 0
-          ])
-        }
-      } catch (err) {
-        console.error(`[Axon Indexer] Failed to parse index for ${folderId}:`, err)
-      }
-    }
-
-    // Find orphan JSONL files not in the index
+  if (existsSync(indexPath)) {
     try {
-      const jsonlFiles = readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'))
-      for (const file of jsonlFiles) {
-        const sid = file.replace('.jsonl', '')
-        if (indexedSessionIds.has(sid)) continue
+      const data = JSON.parse(readFileSync(indexPath, 'utf-8'))
+      const entries = data.entries || []
 
-        const jsonlPath = join(projectDir, file)
+      // Extract project path from first entry with one
+      for (const e of entries) {
+        if (e.projectPath) {
+          projectPath = e.projectPath
+          projectName = e.projectPath.split('/').filter(Boolean).pop() || projectName
+          break
+        }
+      }
+
+      for (const e of entries) {
+        const sid = e.sessionId as string
+        indexedSessionIds.add(sid)
+
+        // Check if JSONL exists + get stat for change detection
+        const jsonlPath = join(projectDir, `${sid}.jsonl`)
         let jsonlSize: number | null = null
         let jsonlMtime: string | null = null
-        try {
-          const st = statSync(jsonlPath)
-          jsonlSize = st.size
-          jsonlMtime = st.mtime.toISOString()
-        } catch { continue }
-
-        // Skip if already indexed and unchanged
-        const existing = db.prepare(
-          'SELECT jsonl_size, jsonl_mtime FROM sessions WHERE id = ?'
-        ).get(sid) as { jsonl_size: number | null; jsonl_mtime: string | null } | undefined
-
-        if (existing && existing.jsonl_size === jsonlSize && existing.jsonl_mtime === jsonlMtime) {
-          continue
+        if (existsSync(jsonlPath)) {
+          try {
+            const st = statSync(jsonlPath)
+            jsonlSize = st.size
+            jsonlMtime = st.mtime.toISOString()
+          } catch { /* ignore */ }
         }
 
-        // Lightweight parse for orphans
-        const parsed = parseJsonlFileLightweight(jsonlPath)
-        if (!parsed) continue
+        // Check if we already have this session with same file stats (skip re-index)
+        const existing = db.prepare(
+          'SELECT jsonl_size, jsonl_mtime, analytics_indexed FROM sessions WHERE id = ?'
+        ).get(sid) as { jsonl_size: number | null; jsonl_mtime: string | null; analytics_indexed: number } | undefined
+
+        if (existing && existing.jsonl_size === jsonlSize && existing.jsonl_mtime === jsonlMtime) {
+          continue // Already indexed and file unchanged
+        }
 
         rows.push([
           sid,
           folderId,
-          projectPath,
+          e.projectPath || projectPath,
           projectName,
-          parsed.firstPrompt,
-          null, // customTitle
-          null, // summary
-          parsed.messageCount,
-          null, // gitBranch
-          parsed.created,
-          parsed.modified,
+          (e.firstPrompt as string)?.slice(0, 200) || null,
+          e.customTitle || null,
+          e.summary || null,
+          e.messageCount || 0,
+          e.gitBranch || null,
+          e.created || null,
+          e.modified || null,
           new Date().toISOString(),
           jsonlSize,
           jsonlMtime,
-          0, // is_sidechain
-          0  // analytics_indexed
+          e.isSidechain ? 1 : 0,
+          // Preserve analytics_indexed if we're updating
+          existing?.analytics_indexed ?? 0
         ])
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error(`[Axon Indexer] Failed to parse index for ${folderId}:`, err)
+    }
+  }
 
-    // Batch insert per project
-    if (rows.length > 0) {
-      insertMany(rows)
+  // Find orphan JSONL files not in the index
+  try {
+    const jsonlFiles = readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'))
+    for (const file of jsonlFiles) {
+      const sid = file.replace('.jsonl', '')
+      if (indexedSessionIds.has(sid)) continue
+
+      const jsonlPath = join(projectDir, file)
+      let jsonlSize: number | null = null
+      let jsonlMtime: string | null = null
+      try {
+        const st = statSync(jsonlPath)
+        jsonlSize = st.size
+        jsonlMtime = st.mtime.toISOString()
+      } catch { continue }
+
+      // Skip if already indexed and unchanged
+      const existing = db.prepare(
+        'SELECT jsonl_size, jsonl_mtime FROM sessions WHERE id = ?'
+      ).get(sid) as { jsonl_size: number | null; jsonl_mtime: string | null } | undefined
+
+      if (existing && existing.jsonl_size === jsonlSize && existing.jsonl_mtime === jsonlMtime) {
+        continue
+      }
+
+      // Lightweight parse for orphans
+      const parsed = parseJsonlFileLightweight(jsonlPath)
+      if (!parsed) continue
+
+      rows.push([
+        sid,
+        folderId,
+        projectPath,
+        projectName,
+        parsed.firstPrompt,
+        null, // customTitle
+        null, // summary
+        parsed.messageCount,
+        null, // gitBranch
+        parsed.created,
+        parsed.modified,
+        new Date().toISOString(),
+        jsonlSize,
+        jsonlMtime,
+        0, // is_sidechain
+        0  // analytics_indexed
+      ])
+    }
+  } catch { /* ignore */ }
+
+  // Batch insert per project
+  if (rows.length > 0) {
+    insertMany(rows)
+  }
+}
+
+function phaseBasicScan(): void {
+  if (!existsSync(PROJECTS_DIR)) return
+
+  const folders = readdirSync(PROJECTS_DIR).filter((f) => {
+    try { return statSync(join(PROJECTS_DIR, f)).isDirectory() }
+    catch { return false }
+  })
+
+  for (const folderId of folders) {
+    scanSingleFolder(folderId)
+  }
+}
+
+/**
+ * Synchronously scan a single project's sessions into DB.
+ * Used by forceIndex to ensure fresh data before returning query results.
+ */
+export function scanProjectSync(targetPath: string): void {
+  if (!existsSync(PROJECTS_DIR)) return
+  getSessionDb()
+
+  // Normalize: expand ~ and strip trailing slashes for reliable comparison
+  const normalized = targetPath.replace(/^~/, homedir()).replace(/\/+$/, '')
+
+  const folders = readdirSync(PROJECTS_DIR).filter((f) => {
+    try { return statSync(join(PROJECTS_DIR, f)).isDirectory() }
+    catch { return false }
+  })
+
+  for (const folderId of folders) {
+    const resolved = resolveProjectFromFolderId(folderId)
+    if (resolved.projectPath && resolved.projectPath.replace(/\/+$/, '') === normalized) {
+      scanSingleFolder(folderId, resolved)
+      return
     }
   }
 }

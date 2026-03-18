@@ -108,40 +108,93 @@ export function CanvasView({
   const canvasTerminals = useTerminalStore(s => s.canvasTerminals)
   const canvasExpanded = useTerminalStore(s => s.canvasExpanded)
 
-  // Keep ref synced
+  // Keep refs synced
   viewportRef.current = viewport
+  const tilesRef = useRef(tiles)
+  tilesRef.current = tiles
 
   // Optimistic nickname overrides — applied instantly, cleared on next refetch
   const [nicknameOverrides, setNicknameOverrides] = useState<Map<string, string>>(new Map())
+
+  // Shared state for session detection across concurrent pollers
+  const claimedSessionIdsRef = useRef(new Set<string>())
+  const pollIntervalsRef = useRef(new Set<ReturnType<typeof setInterval>>())
+  const unmountedRef = useRef(false)
+
+  // Clean up polling intervals on unmount
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+      for (const id of pollIntervalsRef.current) clearInterval(id)
+      pollIntervalsRef.current.clear()
+    }
+  }, [])
 
   // Detect real session ID after spawning a new session
   const detectSessionId = useCallback((fakeId: string, spawnTime: number) => {
     if (!activeProject) return
     let attempts = 0
-    const maxAttempts = 10
+    const maxAttempts = 15
     const poll = setInterval(async () => {
       attempts++
-      if (attempts > maxAttempts) { clearInterval(poll); return }
+      if (attempts > maxAttempts) { clearInterval(poll); pollIntervalsRef.current.delete(poll); return }
       try {
         const res = await fetch(
           `/api/axon/sessions?project=${encodeURIComponent(activeProject)}&forceIndex=true`
         )
+        if (unmountedRef.current) return
         const data = await res.json()
-        const existingTileIds = new Set(tiles.map(t => t.sessionId))
-        // Find a session created after spawn that isn't already on a tile
+        const currentTiles = tilesRef.current
+        const existingTileIds = new Set(currentTiles.map(t => t.sessionId))
+        // Also exclude sessions already mapped to a canvas terminal or claimed by another poller
+        const canvasMapped = new Set(Object.keys(useTerminalStore.getState().canvasTerminals))
+        const claimed = claimedSessionIdsRef.current
+        // Find a session created after spawn that isn't already on a tile, mapped, or claimed
         const match = (data.sessions || []).find((s: { id: string; created_at: string | null }) =>
           !existingTileIds.has(s.id) &&
+          !canvasMapped.has(s.id) &&
+          !claimed.has(s.id) &&
           s.created_at && new Date(s.created_at).getTime() > spawnTime - 5000
         )
         if (match) {
+          claimed.add(match.id)
           clearInterval(poll)
+          pollIntervalsRef.current.delete(poll)
           dispatchTiles({ type: 'REPLACE_SESSION', oldSessionId: fakeId, newSessionId: match.id })
           useTerminalStore.getState().replaceCanvasSessionId(fakeId, match.id)
           immediateSave()
+          onSessionRenamed?.() // Trigger sessions refetch so tile gets its title
         }
       } catch { /* silent */ }
-    }, 3000)
-  }, [activeProject, tiles, dispatchTiles, immediateSave])
+    }, 2000)
+    pollIntervalsRef.current.add(poll)
+  }, [activeProject, dispatchTiles, immediateSave, onSessionRenamed])
+
+  // Handle terminal exits on canvas tiles (e.g. resume failure)
+  useEffect(() => {
+    const cleanedUp = new Set<string>()
+    return useTerminalStore.subscribe((state) => {
+      for (const [sid, tid] of Object.entries(state.canvasTerminals)) {
+        if (cleanedUp.has(sid)) continue
+        const term = state.terminals[tid]
+        if (term?.status === 'exited' && term.exitCode !== 0) {
+          cleanedUp.add(sid)
+          const exitedTid = tid // Capture the terminal ID that exited
+          // Brief delay so user sees the error, then collapse
+          setTimeout(() => {
+            // Skip if terminal was replaced (user re-clicked tile before timeout)
+            const currentTid = useTerminalStore.getState().canvasTerminals[sid]
+            if (currentTid && currentTid !== exitedTid) { cleanedUp.delete(sid); return }
+            useTerminalStore.getState().killCanvasTerminal(sid)
+            cleanedUp.delete(sid) // Allow future failures for same session
+            dispatchTiles({ type: 'RESIZE', sessionId: sid, width: TILE_W, height: TILE_H })
+            immediateSave()
+          }, 1500)
+        }
+      }
+    })
+  }, [dispatchTiles, immediateSave])
 
   const sessionMap = useMemo(() => {
     const map = new Map(sessions.map(s => [s.id, s]))
@@ -536,7 +589,17 @@ export function CanvasView({
           const expandState = store.canvasExpanded[sid]
 
           if (termId && expandState === 'expanded') {
-            // Already expanded — no-op
+            // Check if terminal is actually alive — if exited, clean up and spawn fresh
+            const termEntry = store.terminals[termId]
+            if (termEntry?.status === 'exited' && activeProject) {
+              store.killCanvasTerminal(sid)
+              // Always spawn fresh — don't re-attempt --resume on a failed session
+              store.spawn(activeProject).then(tid => {
+                useTerminalStore.getState().expandCanvasTile(sid, tid)
+                detectSessionId(sid, Date.now())
+              })
+            }
+            // Otherwise truly expanded and alive — no-op
           } else if (termId && expandState === 'minimized') {
             // Minimized — re-expand (no re-spawn, tile is already full size, just remove CSS scale)
             store.setTileExpanded(sid, true)

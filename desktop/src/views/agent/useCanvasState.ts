@@ -36,9 +36,11 @@ export function useCanvasState(projectName: string | null) {
     fetch(`/api/axon/canvas-layout?project=${encodeURIComponent(projectName)}`)
       .then(r => r.json())
       .then(data => {
+        // Filter stale temp tiles that were never resolved to a real session ID
+        const validTiles = (data.tiles || []).filter((t: TileState) => !t.sessionId.startsWith('new-'))
         // Normalize tile dimensions — tiles with terminals keep full size (CSS scale handles minimize)
         const expandedSet = useTerminalStore.getState().canvasExpanded
-        const loadedTiles = (data.tiles || []).map((t: TileState) => {
+        const loadedTiles = validTiles.map((t: TileState) => {
           const state = expandedSet[t.sessionId]
           if (state) {
             // Has terminal — keep at full expanded size (migration: old minimized tiles may be smaller)
@@ -53,7 +55,7 @@ export function useCanvasState(projectName: string | null) {
         dispatchTiles({ type: 'SET_ALL', tiles: loadedTiles })
         dispatchZones({ type: 'SET_ALL', zones: data.zones || [] })
         if (data.viewport) setViewport(data.viewport)
-        savedTileCountRef.current = (data.tiles || []).length
+        savedTileCountRef.current = validTiles.length
         setLoaded(true)
       })
       .catch(() => setLoaded(true))

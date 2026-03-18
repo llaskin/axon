@@ -1549,12 +1549,37 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
 
       // --- Session Browser Endpoints ---
 
+      // Pre-resolve project path from URL (used by forceIndex + sessions query)
       const forceIndex = url.includes('forceIndex=true')
+      let resolvedProjectPath: string | null = null
+      let resolvedProjectName: string | null = null
+      const urlProjectParam = url.match(/[?&]project=([^&]+)/)
+      if (urlProjectParam && url.startsWith('/api/axon/sessions')) {
+        const rawName = decodeURIComponent(urlProjectParam[1])
+        resolvedProjectName = rawName
+        try {
+          const cfg = await readFile(
+            join(AXON_HOME, 'workspaces', rawName, 'config.yaml'), 'utf-8'
+          )
+          const pp = cfg.match(/^project_path:\s*(.+)$/m)?.[1]?.trim()
+          if (pp) {
+            resolvedProjectPath = pp
+            resolvedProjectName = pp.split('/').filter(Boolean).pop() || rawName
+          }
+        } catch { /* fall back to raw name */ }
+      }
+
       if (url.startsWith('/api/axon/sessions') && (forceIndex || Date.now() - lastSessionIndex > 30_000)) {
         lastSessionIndex = Date.now()
         try {
-          const { runFullIndex } = await import('../lib/sessionIndexer')
-          runFullIndex()
+          if (forceIndex && resolvedProjectPath) {
+            // Targeted sync scan — blocks until DB is fresh for this project
+            const { scanProjectSync } = await import('../lib/sessionIndexer')
+            scanProjectSync(resolvedProjectPath)
+          } else {
+            const { runFullIndex } = await import('../lib/sessionIndexer')
+            runFullIndex()
+          }
         } catch (err) {
           console.error('[Axon] Session indexer failed:', err)
         }
@@ -1619,19 +1644,8 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
       // GET /api/axon/sessions?project={name}
       const sessionsMatch = url.match(/^\/api\/axon\/sessions(\?project=([^&]+))?(&|$)/)
       if (sessionsMatch) {
-        const rawProjectName = sessionsMatch[2] ? decodeURIComponent(sessionsMatch[2]) : undefined
-        let projectName = rawProjectName
-        if (rawProjectName) {
-          try {
-            const cfg = await readFile(
-              join(AXON_HOME, 'workspaces', rawProjectName, 'config.yaml'), 'utf-8'
-            )
-            const projectPath = cfg.match(/^project_path:\s*(.+)$/m)?.[1]?.trim()
-            if (projectPath) {
-              projectName = projectPath.split('/').filter(Boolean).pop() || rawProjectName
-            }
-          } catch { /* fall back to raw name */ }
-        }
+        // Reuse pre-resolved project name from above (avoids re-reading config.yaml)
+        const projectName = resolvedProjectName || (sessionsMatch[2] ? decodeURIComponent(sessionsMatch[2]) : undefined)
         try {
           const { getSessions, getIndexStatus } = await import('../lib/sessionDb')
           const { getAllSessionMeta } = await import('../lib/sessionMeta')

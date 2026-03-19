@@ -2,14 +2,39 @@ import Database from 'better-sqlite3'
 import { join } from 'path'
 import { homedir } from 'os'
 import { mkdirSync } from 'fs'
+import { execSync } from 'child_process'
 
 let db: Database.Database | null = null
+let rebuildAttempted = false
 const DB_PATH = join(homedir(), '.axon', 'sessions.db')
 
 export function getSessionDb(): Database.Database {
   if (db) return db
   mkdirSync(join(homedir(), '.axon'), { recursive: true })
-  db = new Database(DB_PATH)
+  try {
+    db = new Database(DB_PATH)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.includes('NODE_MODULE_VERSION') && !rebuildAttempted) {
+      rebuildAttempted = true
+      console.warn('[Axon] better-sqlite3 version mismatch — attempting auto-rebuild...')
+      try {
+        const desktopDir = join(__dirname, '..')
+        execSync('npm rebuild better-sqlite3', { cwd: desktopDir, encoding: 'utf-8', timeout: 30000, stdio: 'pipe' })
+        console.log('[Axon] better-sqlite3 rebuilt successfully. Retrying...')
+        // Clear Node's module cache for better-sqlite3
+        const modKeys = Object.keys(require.cache).filter(k => k.includes('better-sqlite3'))
+        modKeys.forEach(k => delete require.cache[k])
+        // Re-require and retry
+        db = new Database(DB_PATH)
+      } catch (rebuildErr) {
+        console.error('[Axon] Auto-rebuild failed. Run: cd desktop && npm rebuild better-sqlite3')
+        throw err
+      }
+    } else {
+      throw err
+    }
+  }
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.pragma('busy_timeout = 5000')

@@ -50,11 +50,10 @@ export function spawnTerminal(cwd: string, command?: string, sessionId?: string)
   const shell = process.env.SHELL || '/bin/zsh'
 
   // Determine the command to run inside the shell
+  // Note: `command` parameter is ignored for security — only allow claude or claude --resume
   let cmd: string
   if (sessionId) {
     cmd = `claude --resume ${sessionId}`
-  } else if (command) {
-    cmd = command
   } else {
     cmd = 'claude'
   }

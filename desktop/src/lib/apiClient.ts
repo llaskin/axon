@@ -20,23 +20,36 @@ export function clearStoredToken() {
   localStorage.removeItem(TOKEN_KEY)
 }
 
-/** Fetch wrapper that injects auth header when a token is stored */
-export async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
-  const token = getStoredToken()
-  const headers = new Headers(init?.headers)
+/**
+ * Install a global fetch interceptor that injects auth headers on all
+ * /api/axon/* requests. Call this ONCE at app startup (App.tsx).
+ * This avoids having to replace 50+ fetch() call sites across 17 files.
+ */
+export function installAuthInterceptor() {
+  const originalFetch = window.fetch.bind(window)
 
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+
+    // Inject auth header for Axon API calls (but not login/config endpoints)
+    if (url.startsWith('/api/axon') && !url.includes('server-config/login')) {
+      const token = getStoredToken()
+      if (token) {
+        const headers = new Headers(init?.headers)
+        headers.set('Authorization', `Bearer ${token}`)
+        init = { ...init, headers }
+      }
+    }
+
+    const res = await originalFetch(input, init as RequestInit)
+
+    // On 401, trigger auth overlay (not for login/config endpoints)
+    if (res.status === 401 && url.startsWith('/api/axon') && !url.includes('/login') && !url.includes('server-config')) {
+      onAuthRequired?.()
+    }
+
+    return res
   }
-
-  const res = await fetch(url, { ...init, headers })
-
-  // On 401, trigger auth overlay (but not for login/config endpoints)
-  if (res.status === 401 && !url.includes('/login') && !url.includes('server-config')) {
-    onAuthRequired?.()
-  }
-
-  return res
 }
 
 /** Get the WebSocket URL with auth token as query param */

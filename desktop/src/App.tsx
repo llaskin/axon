@@ -18,7 +18,10 @@ import { GenesisProgressView } from '@/views/GenesisProgressView'
 import { IntroSplash } from '@/components/shared/IntroSplash'
 import { PreflightCheck } from '@/components/shared/PreflightCheck'
 import { AuthOverlay } from '@/components/shared/AuthOverlay'
-import { setAuthHandler } from '@/lib/apiClient'
+import { setAuthHandler, installAuthInterceptor } from '@/lib/apiClient'
+
+// Install global fetch interceptor ONCE — injects auth headers on all /api/axon/* calls
+installAuthInterceptor()
 import { useUIStore, type ViewId } from '@/store/uiStore'
 import { useProjectStore } from '@/store/projectStore'
 

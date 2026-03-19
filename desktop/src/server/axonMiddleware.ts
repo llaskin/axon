@@ -2,7 +2,7 @@ import { readdir, readFile } from 'fs/promises'
 import { existsSync, writeFileSync, renameSync, mkdirSync, readFileSync, rmSync, watchFile, unwatchFile, realpathSync, statSync, lstatSync } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
-import { spawn, execSync } from 'child_process'
+import { spawn, execSync, execFileSync } from 'child_process'
 import { hashSync, compareSync } from 'bcryptjs'
 
 /* ── Discovery cache ── */
@@ -234,6 +234,13 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           return
         }
       }
+    }
+
+    // Path traversal guard — reject any URL with encoded traversal sequences
+    if (decodeURIComponent(url).includes('..')) {
+      res.statusCode = 400
+      res.end(JSON.stringify({ error: 'Invalid path' }))
+      return
     }
 
     try {
@@ -912,8 +919,9 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
             const minute = minMatch ? parseInt(minMatch[1]) : null
             let loaded = false
             try {
-              const out = execSync(`launchctl list 2>/dev/null | grep "com.axon.rollup.${project}"`, { encoding: 'utf-8' })
-              loaded = out.trim().length > 0
+              const allServices = execSync('launchctl list 2>/dev/null', { encoding: 'utf-8' })
+              loaded = allServices.includes(`com.axon.rollup.${project.replace(/[^a-zA-Z0-9._-]/g, '')}`)
+
             } catch { /* not loaded */ }
             res.setHeader('Content-Type', 'application/json')
             res.end(JSON.stringify({ installed: true, loaded, hour, minute, schedule: `${String(hour ?? 0).padStart(2, '0')}:${String(minute ?? 0).padStart(2, '0')}` }))
@@ -938,6 +946,12 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           req.on('end', () => resolve(data))
         })
         const { action, time } = JSON.parse(body) as { action: 'install' | 'remove'; time?: string }
+        if (action !== 'install' && action !== 'remove') {
+          res.statusCode = 400
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify({ ok: false, error: 'Invalid action' }))
+          return
+        }
         try {
           const configPath = join(homedir(), '.axon', 'workspaces', project, 'config.yaml')
           let projectPath = ''
@@ -951,7 +965,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           const env: Record<string, string | undefined> = { ...process.env, PROJECT: project, PROJECT_PATH: projectPath, CRON_TIME: time || '02:00' }
           delete env.CLAUDECODE
 
-          const result = execSync(`bash "${cronScript}" ${action}`, { encoding: 'utf-8', env, timeout: 10000 })
+          const result = execFileSync('bash', [cronScript, action], { encoding: 'utf-8', env, timeout: 10000 })
           res.setHeader('Content-Type', 'application/json')
           res.end(JSON.stringify({ ok: true, output: result.trim() }))
         } catch (err) {
@@ -1735,14 +1749,14 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         } catch { /* fallback */ }
 
         try {
-          // Create tag
-          const tagCmd = message
-            ? `git tag -a "${name}" -m "${message.replace(/"/g, '\\"')}"`
-            : `git tag "${name}"`
-          execSync(tagCmd, { cwd, encoding: 'utf-8', stdio: 'pipe' })
+          // Create tag (use execFileSync to prevent shell injection)
+          const tagArgs = message
+            ? ['tag', '-a', name, '-m', message]
+            : ['tag', name]
+          execFileSync('git', tagArgs, { cwd, encoding: 'utf-8', stdio: 'pipe' })
 
           // Push tag
-          execSync(`git push origin "${name}" 2>&1`, { cwd, encoding: 'utf-8', timeout: 30000 })
+          execFileSync('git', ['push', 'origin', name], { cwd, encoding: 'utf-8', timeout: 30000 })
           res.end(JSON.stringify({ ok: true, message: `Tag ${name} created and pushed` }))
         } catch (err: unknown) {
           const msg = err instanceof Error ? (err as { stderr?: string }).stderr || err.message : String(err)
@@ -1766,12 +1780,12 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           let hasUpstream = false
           try { execSync('git rev-parse --verify @{u}', { cwd, stdio: 'pipe' }); hasUpstream = true } catch { /* no upstream */ }
 
-          let cmd = 'git push 2>&1'
+          let pushArgs = ['push']
           if (!hasUpstream) {
-            const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim()
-            cmd = `git push -u origin ${branch} 2>&1`
+            const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim()
+            pushArgs = ['push', '-u', 'origin', branch]
           }
-          const output = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 30000 })
+          const output = execFileSync('git', pushArgs, { cwd, encoding: 'utf-8', timeout: 30000 })
           res.end(JSON.stringify({ ok: true, message: output.trim() || 'Pushed successfully' }))
         } catch (err: unknown) {
           const msg = err instanceof Error ? (err as { stderr?: string }).stderr || err.message : String(err)
@@ -1828,7 +1842,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         } catch { /* proceed */ }
 
         try {
-          const output = execSync(`git checkout ${branch} 2>&1`, { cwd, encoding: 'utf-8', timeout: 10000 })
+          const output = execFileSync('git', ['checkout', branch], { cwd, encoding: 'utf-8', timeout: 10000 })
           res.end(JSON.stringify({ ok: true, message: output.trim() || `Switched to ${branch}` }))
         } catch (err: unknown) {
           const msg = err instanceof Error ? (err as { stderr?: string }).stderr || err.message : String(err)

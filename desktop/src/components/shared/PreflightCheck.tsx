@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Check, AlertTriangle, X, Loader2, Terminal } from 'lucide-react'
+import { Check, AlertTriangle, X, Loader2, Terminal, Download, ExternalLink, RefreshCw } from 'lucide-react'
 import { useDebugStore } from '@/store/debugStore'
 
 const STORAGE_KEY = 'axon-preflight-passed'
@@ -10,25 +10,32 @@ interface PreflightItem {
   status: 'pass' | 'warn' | 'fail'
   detail: string
   action?: string
+  actionType?: string
 }
 
-export function PreflightCheck() {
-  const [visible, setVisible] = useState(() => !localStorage.getItem(STORAGE_KEY))
+export function PreflightCheck({ forceVisible, onDismiss }: { forceVisible?: boolean; onDismiss?: () => void } = {}) {
+  const [visible, setVisible] = useState(() => forceVisible || !localStorage.getItem(STORAGE_KEY))
   const [checks, setChecks] = useState<PreflightItem[]>([])
   const [loading, setLoading] = useState(true)
   const [fading, setFading] = useState(false)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [actionRunning, setActionRunning] = useState<string | null>(null)
 
   const dismiss = useCallback(() => {
-    localStorage.setItem(STORAGE_KEY, '1')
+    if (!forceVisible) localStorage.setItem(STORAGE_KEY, '1')
     setFading(true)
-    setTimeout(() => setVisible(false), 800)
-  }, [])
+    setTimeout(() => {
+      setVisible(false)
+      onDismiss?.()
+    }, 800)
+  }, [forceVisible, onDismiss])
 
   const manualRef = useRef(false)
 
   const show = useCallback(() => {
     manualRef.current = true
     setFading(false)
+    setFetchError(null)
     setVisible(true)
   }, [])
 
@@ -49,10 +56,19 @@ export function PreflightCheck() {
     return () => unregister('show-preflight')
   }, [register, unregister, visible, dismiss, show])
 
+  // Allow Settings to trigger visibility
+  useEffect(() => {
+    if (forceVisible && !visible) {
+      show()
+    }
+  }, [forceVisible, visible, show])
+
   const runChecks = useCallback(async () => {
     setLoading(true)
+    setFetchError(null)
     try {
       const res = await fetch('/api/axon/preflight')
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
       const data = await res.json()
       setChecks(data.checks || [])
       // Auto-dismiss on first launch if everything passes (not when manually triggered)
@@ -61,7 +77,8 @@ export function PreflightCheck() {
         setFading(true)
         setTimeout(() => setVisible(false), 800)
       }
-    } catch {
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : 'Failed to run checks')
       setChecks([])
     } finally {
       setLoading(false)
@@ -71,6 +88,50 @@ export function PreflightCheck() {
   useEffect(() => {
     if (visible) runChecks()
   }, [visible, runChecks])
+
+  const handleAction = useCallback(async (item: PreflightItem) => {
+    if (!item.actionType) return
+
+    // URL actions open in browser
+    if (item.actionType.startsWith('open-url:')) {
+      const url = item.actionType.slice('open-url:'.length)
+      window.open(url, '_blank')
+      return
+    }
+
+    // npm actions run on server
+    if (item.actionType === 'install-cli' || item.actionType === 'update-cli') {
+      setActionRunning(item.id)
+      try {
+        const res = await fetch('/api/axon/preflight/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ actionType: item.actionType }),
+        })
+        const data = await res.json()
+        if (!data.ok) throw new Error(data.error || 'Action failed')
+        // Show success message, then re-run checks
+        if (data.message) {
+          setChecks(prev => prev.map(c =>
+            c.id === item.id
+              ? { ...c, detail: data.message, status: 'pass' as const, action: undefined, actionType: undefined }
+              : c
+          ))
+        }
+        // Re-run checks after a brief delay so user sees the message
+        setTimeout(() => runChecks(), 1500)
+      } catch (err) {
+        // Update the check to show the error
+        setChecks(prev => prev.map(c =>
+          c.id === item.id
+            ? { ...c, detail: err instanceof Error ? err.message : 'Action failed', status: 'fail' as const }
+            : c
+        ))
+      } finally {
+        setActionRunning(null)
+      }
+    }
+  }, [runChecks])
 
   if (!visible) return null
 
@@ -101,6 +162,12 @@ export function PreflightCheck() {
               <Loader2 size={16} className="animate-spin" />
               <span className="font-mono text-small">Running checks...</span>
             </div>
+          ) : fetchError ? (
+            <div className="px-4 py-8 text-center">
+              <X size={20} className="text-[var(--ax-error)] mx-auto mb-2" />
+              <p className="text-body text-ax-text-primary font-medium mb-1">Failed to run checks</p>
+              <p className="font-mono text-micro text-ax-text-tertiary">{fetchError}</p>
+            </div>
           ) : (
             <div className="divide-y divide-ax-border-subtle">
               {checks.map(c => (
@@ -113,7 +180,27 @@ export function PreflightCheck() {
                       <span className="text-body text-ax-text-primary font-medium">{c.label}</span>
                       <span className="font-mono text-micro text-ax-text-ghost truncate">{c.detail}</span>
                     </div>
-                    {c.action && c.status !== 'pass' && (
+                    {c.action && c.status !== 'pass' && c.actionType && (
+                      <button
+                        onClick={() => handleAction(c)}
+                        disabled={actionRunning === c.id}
+                        className="inline-flex items-center gap-1.5 mt-1 font-mono text-micro
+                          text-ax-brand hover:text-ax-brand-hover transition-colors
+                          disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {actionRunning === c.id ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : c.actionType.startsWith('open-url:') ? (
+                          <ExternalLink size={10} />
+                        ) : c.actionType === 'install-cli' ? (
+                          <Download size={10} />
+                        ) : (
+                          <RefreshCw size={10} />
+                        )}
+                        {actionRunning === c.id ? 'Running...' : c.action}
+                      </button>
+                    )}
+                    {c.action && c.status !== 'pass' && !c.actionType && (
                       <p className="font-mono text-micro text-ax-text-tertiary mt-0.5">{c.action}</p>
                     )}
                   </div>

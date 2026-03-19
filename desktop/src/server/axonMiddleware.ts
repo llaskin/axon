@@ -113,7 +113,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
     try {
       // GET /api/axon/preflight — system health check for first-run setup
       if (url === '/api/axon/preflight') {
-        const checks: { id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string; action?: string }[] = []
+        const checks: { id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string; action?: string; actionType?: string }[] = []
 
         // Electron apps have a restricted PATH — resolve the user's login shell PATH
         let shellPath = process.env.PATH || ''
@@ -130,22 +130,58 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           label: 'Axon data directory',
           status: homeExists ? 'pass' : 'fail',
           detail: homeExists ? AXON_HOME : `${AXON_HOME} not found`,
-          action: homeExists ? undefined : 'Run axon init to create it',
+          action: homeExists ? undefined : 'Will be created during onboarding',
         })
 
-        // 2. CLI installed
-        let cliInstalled = false
+        // 2. CLI installed + version check
+        let cliVersion = ''
         try {
-          execSync('which axon', execOpts)
-          cliInstalled = true
+          cliVersion = execSync('axon --version 2>/dev/null', { ...execOpts, encoding: 'utf-8' }).trim()
         } catch { /* not found */ }
-        checks.push({
-          id: 'cli',
-          label: 'Axon CLI',
-          status: cliInstalled ? 'pass' : 'fail',
-          detail: cliInstalled ? 'axon in PATH' : 'Not found',
-          action: cliInstalled ? undefined : 'npm i -g axon-dev',
-        })
+
+        // Check npm registry for latest version
+        let latestCliVersion = ''
+        try {
+          const npmInfo = execSync('npm view axon-dev version 2>/dev/null', { ...execOpts, encoding: 'utf-8', timeout: 8000 }).trim()
+          if (npmInfo) latestCliVersion = npmInfo
+        } catch { /* registry unavailable */ }
+
+        // Detect dev symlink (npm link) — version mismatch is expected
+        let isLinkedDev = false
+        try {
+          const axonPath = execSync('which axon', { ...execOpts, encoding: 'utf-8', timeout: 5000 }).trim()
+          const { lstatSync, realpathSync } = await import('fs')
+          const stat = lstatSync(axonPath)
+          if (stat.isSymbolicLink()) {
+            const realPath = realpathSync(axonPath)
+            if (existsSync(join(realPath, '..', '..', '.git'))) {
+              isLinkedDev = true
+            }
+          }
+        } catch { /* can't detect */ }
+
+        if (cliVersion) {
+          const vMatch = cliVersion.match(/v?([\d.]+)/)
+          const installed = vMatch ? vMatch[1] : ''
+          const outdated = !isLinkedDev && latestCliVersion && installed && installed !== latestCliVersion
+          checks.push({
+            id: 'cli',
+            label: 'Axon CLI',
+            status: outdated ? 'warn' : 'pass',
+            detail: isLinkedDev ? `${cliVersion} (dev)` : outdated ? `${cliVersion} → v${latestCliVersion} available` : cliVersion,
+            action: outdated ? 'Update available' : undefined,
+            actionType: outdated ? 'update-cli' : undefined,
+          })
+        } else {
+          checks.push({
+            id: 'cli',
+            label: 'Axon CLI',
+            status: 'fail',
+            detail: 'Not found',
+            action: 'Install CLI',
+            actionType: 'install-cli',
+          })
+        }
 
         // 3. Claude CLI
         let claudeVersion = ''
@@ -157,31 +193,37 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           label: 'Claude CLI',
           status: claudeVersion ? 'pass' : 'warn',
           detail: claudeVersion || 'Not found',
-          action: claudeVersion ? undefined : 'Install from claude.ai/code',
+          action: claudeVersion ? undefined : 'Install Claude Code',
+          actionType: claudeVersion ? undefined : 'open-url:https://claude.ai/code',
         })
 
         // 4. Git
-        let gitOk = false
+        let gitVersion = ''
         try {
-          execSync('which git', execOpts)
-          gitOk = true
+          gitVersion = execSync('git --version 2>/dev/null', { ...execOpts, encoding: 'utf-8' }).trim()
         } catch { /* not found */ }
         checks.push({
           id: 'git',
           label: 'Git',
-          status: gitOk ? 'pass' : 'fail',
-          detail: gitOk ? 'Available' : 'Not found',
+          status: gitVersion ? 'pass' : 'fail',
+          detail: gitVersion || 'Not found',
+          action: gitVersion ? undefined : 'Install Git',
+          actionType: gitVersion ? undefined : 'open-url:https://git-scm.com/downloads',
         })
 
-        // 5. Node version
-        const nodeVersion = process.version
-        const nodeMajor = parseInt(nodeVersion.slice(1))
+        // 5. Node version — check SYSTEM node, not Electron's bundled Node
+        let systemNodeVersion = ''
+        try {
+          systemNodeVersion = execSync('node --version 2>/dev/null', { ...execOpts, encoding: 'utf-8' }).trim()
+        } catch { /* not found */ }
+        const nodeMajor = systemNodeVersion ? parseInt(systemNodeVersion.slice(1)) : 0
         checks.push({
           id: 'node',
           label: 'Node.js',
-          status: nodeMajor >= 22 ? 'pass' : nodeMajor >= 20 ? 'warn' : 'fail',
-          detail: nodeVersion,
-          action: nodeMajor < 22 ? 'Recommended: Node 22+' : undefined,
+          status: !systemNodeVersion ? 'fail' : nodeMajor >= 22 ? 'pass' : nodeMajor >= 20 ? 'warn' : 'fail',
+          detail: systemNodeVersion || 'Not found in PATH',
+          action: !systemNodeVersion || nodeMajor < 20 ? 'Install Node.js 22+' : nodeMajor < 22 ? 'Recommended: Node 22+' : undefined,
+          actionType: !systemNodeVersion || nodeMajor < 20 ? 'open-url:https://nodejs.org' : undefined,
         })
 
         // 6. Projects exist
@@ -198,11 +240,68 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           label: 'Projects',
           status: projectCount > 0 ? 'pass' : 'warn',
           detail: projectCount > 0 ? `${projectCount} project${projectCount !== 1 ? 's' : ''}` : 'None yet',
-          action: projectCount === 0 ? 'Use onboarding to add your first project' : undefined,
+          action: projectCount === 0 ? 'Add a project in onboarding' : undefined,
         })
 
         const allPass = checks.every(c => c.status === 'pass')
         res.end(JSON.stringify({ ok: allPass, checks }))
+        return
+      }
+
+      // POST /api/axon/preflight/action — execute a preflight fix action
+      if (url === '/api/axon/preflight/action' && req.method === 'POST') {
+        const body = await new Promise<string>((resolve) => {
+          let data = ''
+          req.on('data', (chunk: Buffer) => { data += chunk.toString() })
+          req.on('end', () => resolve(data))
+        })
+        const { actionType } = JSON.parse(body) as { actionType: string }
+
+        // Resolve login shell PATH for npm commands
+        let shellPath = process.env.PATH || ''
+        try {
+          const shell = process.env.SHELL || '/bin/zsh'
+          shellPath = execSync(`${shell} -lc 'printenv PATH'`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 3000 }).trim()
+        } catch { /* fallback */ }
+        const execOpts = { encoding: 'utf-8' as const, env: { ...process.env, PATH: shellPath }, timeout: 60_000, stdio: 'pipe' as const }
+
+        try {
+          // Detect if CLI is a dev symlink (npm link) — update won't help
+          if (actionType === 'update-cli' || actionType === 'install-cli') {
+            let isLinkedDev = false
+            try {
+              const axonPath = execSync('which axon', { ...execOpts, timeout: 5000 }).trim()
+              const { lstatSync, realpathSync } = await import('fs')
+              const stat = lstatSync(axonPath)
+              if (stat.isSymbolicLink()) {
+                const realPath = realpathSync(axonPath)
+                // If the real path points into a git repo (dev install), it's linked
+                if (existsSync(join(realPath, '..', '..', '.git'))) {
+                  isLinkedDev = true
+                }
+              }
+            } catch { /* can't detect, proceed normally */ }
+
+            if (isLinkedDev && actionType === 'update-cli') {
+              res.end(JSON.stringify({ ok: true, message: 'Dev install detected — pull latest from git instead of npm update' }))
+              return
+            }
+          }
+
+          if (actionType === 'install-cli') {
+            execSync('npm install -g axon-dev', execOpts)
+            res.end(JSON.stringify({ ok: true, message: 'Axon CLI installed' }))
+          } else if (actionType === 'update-cli') {
+            execSync('npm install -g axon-dev@latest', execOpts)
+            res.end(JSON.stringify({ ok: true, message: 'Axon CLI updated' }))
+          } else {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, error: 'Unknown action' }))
+          }
+        } catch (err) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : 'Action failed' }))
+        }
         return
       }
 
@@ -246,8 +345,17 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           let genesisStatus: string | undefined
           if (episodeCount === 0) {
             try {
-              const lock = JSON.parse(readFileSync(join(wsPath, '.genesis-lock'), 'utf-8'))
+              const lockPath = join(wsPath, '.genesis-lock')
+              const lock = JSON.parse(readFileSync(lockPath, 'utf-8'))
               genesisStatus = lock.status // 'running' | 'complete' | 'failed'
+              // Detect stale genesis-lock: if running for >10 minutes, mark as failed
+              if (lock.status === 'running' && lock.startedAt) {
+                const elapsed = Date.now() - new Date(lock.startedAt).getTime()
+                if (elapsed > 10 * 60 * 1000) {
+                  genesisStatus = 'failed'
+                  writeFileSync(lockPath, JSON.stringify({ status: 'failed', error: 'Timed out after 10 minutes' }))
+                }
+              }
             } catch {
               // No lock file — genesis hasn't been attempted
             }
@@ -1691,6 +1799,18 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           return
         }
 
+        // Pre-check: Claude CLI must be available for genesis
+        let shellPath = process.env.PATH || ''
+        try {
+          const shell = process.env.SHELL || '/bin/zsh'
+          shellPath = execSync(`${shell} -lc 'printenv PATH'`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 3000 }).trim()
+        } catch { /* fallback */ }
+        let claudeAvailable = false
+        try {
+          execSync('which claude', { stdio: 'pipe', env: { ...process.env, PATH: shellPath }, timeout: 5000 })
+          claudeAvailable = true
+        } catch { /* not found */ }
+
         // Create workspace dirs + config.yaml synchronously
         mkdirSync(join(wsPath, 'episodes'), { recursive: true })
         mkdirSync(join(wsPath, 'dendrites'), { recursive: true })
@@ -1727,6 +1847,15 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
 
         writeFileSync(join(wsPath, 'config.yaml'), configYaml + '\n')
 
+        // Invalidate discovery cache
+        discoveryCache = null
+
+        // If Claude CLI is not available, create workspace but skip genesis
+        if (!claudeAvailable) {
+          res.end(JSON.stringify({ name: projectName, status: 'created', warning: 'Claude CLI not found — genesis skipped. Install Claude Code and run genesis later.' }))
+          return
+        }
+
         // Write genesis lock
         writeFileSync(join(wsPath, '.genesis-lock'), JSON.stringify({ status: 'running', startedAt: new Date().toISOString() }))
 
@@ -1734,6 +1863,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         const cleanEnv = { ...process.env }
         delete cleanEnv.CLAUDECODE
         delete cleanEnv.CLAUDE_CODE_SESSION
+        cleanEnv.PATH = shellPath
 
         const cliDir = config.cliDir || resolve(process.cwd(), '..', 'cli')
         const initScript = join(cliDir, 'axon-init')
@@ -1767,9 +1897,6 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
 
         child.unref()
 
-        // Invalidate discovery cache
-        discoveryCache = null
-
         res.end(JSON.stringify({ name: projectName, status: 'running' }))
         return
       }
@@ -1796,6 +1923,16 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
             const lock = JSON.parse(readFileSync(lockPath, 'utf-8'))
             status = lock.status
             error = lock.error
+            // Detect stale genesis-lock: if running for >10 minutes, mark as failed
+            if (lock.status === 'running' && lock.startedAt) {
+              const elapsed = Date.now() - new Date(lock.startedAt).getTime()
+              if (elapsed > 10 * 60 * 1000) {
+                status = 'failed'
+                error = 'Genesis timed out after 10 minutes'
+                // Clean up the stale lock
+                writeFileSync(lockPath, JSON.stringify({ status: 'failed', error: 'Timed out after 10 minutes' }))
+              }
+            }
           } catch {
             status = 'unknown'
           }
@@ -1821,6 +1958,21 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           userContext?: string
         }
 
+        // Pre-check: Claude CLI must be available for genesis
+        let shellPath = process.env.PATH || ''
+        try {
+          const shell = process.env.SHELL || '/bin/zsh'
+          shellPath = execSync(`${shell} -lc 'printenv PATH'`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 3000 }).trim()
+        } catch { /* fallback */ }
+        try {
+          execSync('which claude', { stdio: 'pipe', env: { ...process.env, PATH: shellPath }, timeout: 5000 })
+        } catch {
+          res.statusCode = 400
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify({ error: 'Claude CLI not found. Install it from claude.ai/code before running genesis.' }))
+          return
+        }
+
         res.setHeader('Content-Type', 'text/event-stream')
         res.setHeader('Cache-Control', 'no-cache')
         res.setHeader('Connection', 'keep-alive')
@@ -1828,6 +1980,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         const cleanEnv = { ...process.env }
         delete cleanEnv.CLAUDECODE
         delete cleanEnv.CLAUDE_CODE_SESSION
+        cleanEnv.PATH = shellPath
 
         const cliDir = config.cliDir || resolve(process.cwd(), '..', 'cli')
         const initScript = join(cliDir, 'axon-init')

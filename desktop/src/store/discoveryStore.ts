@@ -6,6 +6,7 @@ import { useUIStore } from './uiStore'
 interface DiscoveryStore {
   repos: DiscoveredRepo[]
   loading: boolean
+  initializing: Set<string>
   fetchRepos: () => Promise<void>
   initRepo: (repo: DiscoveredRepo) => Promise<void>
 }
@@ -13,6 +14,7 @@ interface DiscoveryStore {
 export const useDiscoveryStore = create<DiscoveryStore>((set, get) => ({
   repos: [],
   loading: false,
+  initializing: new Set(),
 
   fetchRepos: async () => {
     set({ loading: true })
@@ -34,6 +36,11 @@ export const useDiscoveryStore = create<DiscoveryStore>((set, get) => ({
   },
 
   initRepo: async (repo) => {
+    // Guard against concurrent init for the same repo
+    const { initializing } = get()
+    if (initializing.has(repo.path)) return
+    set({ initializing: new Set([...initializing, repo.path]) })
+
     try {
       const res = await fetch('/api/axon/init-quick', {
         method: 'POST',
@@ -56,6 +63,10 @@ export const useDiscoveryStore = create<DiscoveryStore>((set, get) => ({
       }
     } catch (e) {
       console.error('Failed to init repo:', e)
+    } finally {
+      const updated = new Set(get().initializing)
+      updated.delete(repo.path)
+      set({ initializing: updated })
     }
   },
 }))

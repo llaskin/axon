@@ -151,6 +151,7 @@ export function OnboardingView() {
               setGenesisContent(content)
               goTo('review', 'forward')
             }}
+            onBack={() => goTo('user-context', 'back')}
           />
         )}
         {step === 'review' && selectedRepo && (
@@ -946,10 +947,11 @@ Or: I'm the CEO reviewing high-level progress and making strategic decisions."
 
 // ─── Step 4: Genesis Progress ───────────────────────────────────
 
-function GenesisProgress({ repo, userContext, onComplete }: {
+function GenesisProgress({ repo, userContext, onComplete, onBack }: {
   repo: DiscoveredRepo
   userContext?: string
   onComplete: (content: string) => void
+  onBack?: () => void
 }) {
   const [phase, setPhase] = useState<GenesisPhase>('reading')
   const [logs, setLogs] = useState<string[]>([])
@@ -960,6 +962,7 @@ function GenesisProgress({ repo, userContext, onComplete }: {
   onCompleteRef.current = onComplete
   const startTime = useRef(Date.now())
   const logEndRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   // Elapsed timer
   useEffect(() => {
@@ -981,12 +984,14 @@ function GenesisProgress({ repo, userContext, onComplete }: {
     if (timer) setPhase(timer.phase)
   }, [elapsed, phase])
 
-  // Start genesis — ref guard prevents double-fire in strict mode
+  // Start genesis
   const genesisStarted = useRef(false)
-  useEffect(() => {
+  const startGenesis = useCallback(() => {
     if (genesisStarted.current) return
     genesisStarted.current = true
-    let cancelled = false
+
+    const controller = new AbortController()
+    abortRef.current = controller
 
     const run = async () => {
       try {
@@ -998,7 +1003,15 @@ function GenesisProgress({ repo, userContext, onComplete }: {
             projectPath: repo.path,
             ...(userContext ? { userContext } : {}),
           }),
+          signal: controller.signal,
         })
+
+        // Handle pre-flight errors (e.g., Claude CLI not found)
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: `Server error ${res.status}` }))
+          setError(errData.error || `Genesis failed (HTTP ${res.status})`)
+          return
+        }
 
         const reader = res.body?.getReader()
         if (!reader) { setError('No response stream'); return }
@@ -1006,7 +1019,7 @@ function GenesisProgress({ repo, userContext, onComplete }: {
         const decoder = new TextDecoder()
         let sseBuffer = ''
 
-        while (!cancelled) {
+        while (!controller.signal.aborted) {
           const { done, value } = await reader.read()
           if (done) break
 
@@ -1036,7 +1049,7 @@ function GenesisProgress({ repo, userContext, onComplete }: {
                   setPhase('done')
                   // Small delay for the animation to feel right
                   setTimeout(() => {
-                    if (!cancelled) onCompleteRef.current(contentRef.current)
+                    if (!controller.signal.aborted) onCompleteRef.current(contentRef.current)
                   }, 1500)
                 }
               } else if (event.type === 'error') {
@@ -1046,14 +1059,33 @@ function GenesisProgress({ repo, userContext, onComplete }: {
           }
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Genesis failed')
+        if (!controller.signal.aborted) {
+          setError(e instanceof Error ? e.message : 'Genesis failed')
+        }
       }
     }
 
     run()
-    return () => { cancelled = true }
+  }, [repo.name, repo.path, userContext])
+
+  // Auto-start on mount
+  useEffect(() => {
+    startGenesis()
+    return () => { abortRef.current?.abort() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repo.name, repo.path])
+  }, [])
+
+  const handleRetry = useCallback(() => {
+    abortRef.current?.abort()
+    genesisStarted.current = false
+    setError(null)
+    setPhase('reading')
+    setLogs([])
+    setElapsed(0)
+    contentRef.current = ''
+    startTime.current = Date.now()
+    startGenesis()
+  }, [startGenesis])
 
   // Auto-scroll logs
   useEffect(() => {
@@ -1148,10 +1180,34 @@ function GenesisProgress({ repo, userContext, onComplete }: {
         </div>
       </div>
 
-      {/* Error */}
+      {/* Error with retry/back */}
       {error && (
-        <div className="p-4 rounded-xl bg-ax-error-subtle border border-ax-error/20 text-body text-ax-error">
-          {error}
+        <div className="p-4 rounded-xl bg-ax-error-subtle border border-ax-error/20">
+          <p className="text-body text-ax-error mb-3">{error}</p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleRetry}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-small
+                bg-ax-brand text-white hover:bg-ax-brand-hover transition-colors"
+            >
+              <ArrowRight size={14} />
+              Retry
+            </button>
+            {onBack && (
+              <button
+                onClick={() => {
+                  abortRef.current?.abort()
+                  onBack()
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-small
+                  text-ax-text-secondary hover:text-ax-text-primary
+                  border border-ax-border-subtle hover:border-ax-border transition-colors"
+              >
+                <ArrowLeft size={14} />
+                Back
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

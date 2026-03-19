@@ -103,6 +103,12 @@ export function IntroSplash() {
     // Freeze on final frame — user clicks "Get Started" when ready
   }, [])
 
+  // If the video fails to load (missing file), skip the splash entirely
+  const handleError = useCallback(() => {
+    localStorage.setItem(STORAGE_KEY, '1')
+    setVisible(false)
+  }, [])
+
   if (!visible) return null
 
   return (
@@ -134,6 +140,7 @@ export function IntroSplash() {
           onLoadedMetadata={handleLoadedMetadata}
           onCanPlay={handleCanPlay}
           onEnded={handleEnded}
+          onError={handleError}
         />
         {/* Soft edge blend — feathers the video into the background */}
         <div
@@ -174,8 +181,8 @@ export function IntroSplash() {
           if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
           dismiss()
         }}
-        className="absolute top-6 right-6 font-mono text-micro text-white/30
-          hover:text-white/60 transition-colors"
+        className="absolute top-6 right-6 font-mono text-micro text-white/50
+          hover:text-white/80 transition-colors"
       >
         Skip
       </button>

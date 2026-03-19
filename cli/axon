@@ -132,6 +132,12 @@ case "$COMMAND" in
     sync)     exec "$SCRIPT_DIR/axon-sync" ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"} ;;
     cron)     exec "$SCRIPT_DIR/axon-cron" ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"} ;;
     doctor)   exec "$SCRIPT_DIR/axon-doctor" ;;
-    --version|-v) echo "axon v0.1.0 (poc)"; exit 0 ;;
+    --version|-v)
+      _ver="unknown"
+      if [ -f "$SCRIPT_DIR/../package.json" ]; then
+        _ver=$(grep '"version"' "$SCRIPT_DIR/../package.json" | head -1 | sed 's/.*"version".*"\(.*\)".*/\1/')
+      fi
+      echo "axon v${_ver}"
+      exit 0 ;;
     *)        usage ;;
 esac

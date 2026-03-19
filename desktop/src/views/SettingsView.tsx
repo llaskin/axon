@@ -6,6 +6,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useBackend } from '@/providers/DataProvider'
 import { formatDate } from '@/lib/utils'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { PreflightCheck } from '@/components/shared/PreflightCheck'
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -615,6 +616,33 @@ function CronJobsPanel({ project }: { project: string }) {
 
 // ─── Main Settings View ──────────────────────────────────────────
 
+function SystemHealthButton() {
+  const [showPreflight, setShowPreflight] = useState(false)
+
+  return (
+    <>
+      <Card title="System" className="animate-fade-in-up">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[12px] text-ax-text-primary">System Health</p>
+            <p className="text-[10px] text-ax-text-tertiary">Check prerequisites</p>
+          </div>
+          <button
+            onClick={() => setShowPreflight(true)}
+            className="flex items-center gap-1.5 font-mono text-[10px] px-2.5 py-1 rounded-lg bg-ax-sunken text-ax-text-secondary border border-ax-border-subtle hover:bg-ax-sunken/80 transition-colors"
+          >
+            <Terminal size={11} />
+            Run check
+          </button>
+        </div>
+      </Card>
+      {showPreflight && (
+        <PreflightCheck forceVisible onDismiss={() => setShowPreflight(false)} />
+      )}
+    </>
+  )
+}
+
 export function SettingsView() {
   const { projects, activeProject, setProjects, setActiveProject } = useProjectStore()
   const setView = useUIStore(s => s.setView)
@@ -1070,9 +1098,10 @@ export function SettingsView() {
           </div>
         </div>
 
-        {/* ─── Right Column: Cron + Jobs ─── */}
-        <div className="lg:sticky lg:top-0">
+        {/* ─── Right Column: Cron + Jobs + System Health ─── */}
+        <div className="lg:sticky lg:top-0 space-y-4">
           <CronJobsPanel project={selectedProject} />
+          <SystemHealthButton />
         </div>
 
       </div>

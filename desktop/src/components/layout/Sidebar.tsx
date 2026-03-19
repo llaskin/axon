@@ -5,7 +5,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useUIStore, type ViewId } from '@/store/uiStore'
 import { useDebugStore } from '@/store/debugStore'
 import { useDiscoveredRepos } from '@/hooks/useDiscoveredRepos'
-import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare, GitBranch, GripVertical, HelpCircle, X } from 'lucide-react'
+import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare, GitBranch, GripVertical, HelpCircle, X, Globe } from 'lucide-react'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 
 const HINT_STORAGE_KEY = 'axon-shortcut-hints-dismissed'
@@ -462,6 +462,23 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
             )}
           </div>
         )}
+
+        {/* Remote connection indicator */}
+        {(() => {
+          const h = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
+          const isRemote = h !== 'localhost' && h !== '127.0.0.1' && h !== '0.0.0.0'
+          if (!isRemote) return null
+          return collapsed ? (
+            <div title={`Remote · ${h}`} className="mb-1">
+              <Globe size={12} className="text-[var(--ax-brand-primary)]" />
+            </div>
+          ) : (
+            <div className="w-full px-2 mb-1 flex items-center gap-1.5 font-mono text-[9px] text-[var(--ax-brand-primary)]">
+              <Globe size={9} />
+              <span className="truncate">Remote · {h}</span>
+            </div>
+          )
+        })()}
 
         <div className={`flex items-center ${collapsed ? 'flex-col gap-1' : 'gap-1'}`}>
         {/* Keyboard shortcuts panel */}

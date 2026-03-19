@@ -340,51 +340,57 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           action: homeExists ? undefined : 'Will be created during onboarding',
         })
 
-        // 2. CLI installed + version check
+        // 2. CLI — check bundled (cliDir) first, then PATH
+        const cliDir = config.cliDir
+        const hasBundledCli = cliDir && existsSync(join(cliDir, 'axon-init'))
+
         let cliVersion = ''
         try {
           cliVersion = execSync('axon --version 2>/dev/null', { ...execOpts, encoding: 'utf-8' }).trim()
-        } catch { /* not found */ }
+        } catch { /* not in PATH */ }
 
-        // Check npm registry for latest version
-        let latestCliVersion = ''
-        try {
-          const npmInfo = execSync('npm view axon-dev version 2>/dev/null', { ...execOpts, encoding: 'utf-8', timeout: 8000 }).trim()
-          if (npmInfo) latestCliVersion = npmInfo
-        } catch { /* registry unavailable */ }
+        if (hasBundledCli || cliVersion) {
+          // CLI available (bundled or in PATH)
+          let detail = ''
+          let status: 'pass' | 'warn' = 'pass'
+          let action: string | undefined
+          let actionType: string | undefined
 
-        // Detect dev symlink (npm link) — version mismatch is expected
-        let isLinkedDev = false
-        try {
-          const axonPath = execSync('which axon', { ...execOpts, encoding: 'utf-8', timeout: 5000 }).trim()
-          const stat = lstatSync(axonPath)
-          if (stat.isSymbolicLink()) {
-            const realPath = realpathSync(axonPath)
-            if (existsSync(join(realPath, '..', '..', '.git'))) {
-              isLinkedDev = true
-            }
+          if (cliVersion) {
+            // Check for updates if we have a PATH version
+            let latestCliVersion = ''
+            try {
+              const npmInfo = execSync('npm view axon-dev version 2>/dev/null', { ...execOpts, encoding: 'utf-8', timeout: 8000 }).trim()
+              if (npmInfo) latestCliVersion = npmInfo
+            } catch { /* registry unavailable */ }
+
+            let isLinkedDev = false
+            try {
+              const axonPath = execSync('which axon', { ...execOpts, encoding: 'utf-8', timeout: 5000 }).trim()
+              const stat = lstatSync(axonPath)
+              if (stat.isSymbolicLink()) {
+                const realPath = realpathSync(axonPath)
+                if (existsSync(join(realPath, '..', '..', '.git'))) isLinkedDev = true
+              }
+            } catch {}
+
+            const vMatch = cliVersion.match(/v?([\d.]+)/)
+            const installed = vMatch ? vMatch[1] : ''
+            const outdated = !isLinkedDev && latestCliVersion && installed && installed !== latestCliVersion
+            detail = isLinkedDev ? `${cliVersion} (dev)` : outdated ? `${cliVersion} → v${latestCliVersion} available` : cliVersion
+            if (outdated) { status = 'warn'; action = 'Update available'; actionType = 'update-cli' }
+          } else {
+            detail = 'Bundled with app'
           }
-        } catch { /* can't detect */ }
 
-        if (cliVersion) {
-          const vMatch = cliVersion.match(/v?([\d.]+)/)
-          const installed = vMatch ? vMatch[1] : ''
-          const outdated = !isLinkedDev && latestCliVersion && installed && installed !== latestCliVersion
-          checks.push({
-            id: 'cli',
-            label: 'Axon CLI',
-            status: outdated ? 'warn' : 'pass',
-            detail: isLinkedDev ? `${cliVersion} (dev)` : outdated ? `${cliVersion} → v${latestCliVersion} available` : cliVersion,
-            action: outdated ? 'Update available' : undefined,
-            actionType: outdated ? 'update-cli' : undefined,
-          })
+          checks.push({ id: 'cli', label: 'Axon CLI', status, detail, action, actionType })
         } else {
           checks.push({
             id: 'cli',
             label: 'Axon CLI',
-            status: 'fail',
-            detail: 'Not found',
-            action: 'Install CLI',
+            status: 'warn',
+            detail: 'Not in PATH (optional — app works without it)',
+            action: 'Install via npm for terminal use',
             actionType: 'install-cli',
           })
         }

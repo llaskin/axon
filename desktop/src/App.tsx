@@ -15,6 +15,7 @@ import { TodosView } from '@/views/TodosView'
 import { SourceControlView } from '@/views/SourceControlView'
 import { AboutView } from '@/views/AboutView'
 import { GenesisProgressView } from '@/views/GenesisProgressView'
+import { DeepSearchView } from '@/views/DeepSearchView'
 import { IntroSplash } from '@/components/shared/IntroSplash'
 import { PreflightCheck } from '@/components/shared/PreflightCheck'
 import { AuthOverlay } from '@/components/shared/AuthOverlay'
@@ -112,7 +113,7 @@ function EditorialNav({ activeView }: { activeView: ViewId }) {
 
 /* ── View router ─────────────────────────────────────────────── */
 
-const ALLOWED_UNINITIALIZED = new Set<ViewId>(['onboarding', 'settings', 'terminal', 'genesis-progress', 'source'])
+const ALLOWED_UNINITIALIZED = new Set<ViewId>(['onboarding', 'settings', 'terminal', 'genesis-progress', 'source', 'deep-search'])
 
 function ViewRouter() {
   const activeView = useUIStore(s => s.activeView)
@@ -211,6 +212,7 @@ function ViewRouter() {
             {activeView === 'onboarding' && <OnboardingView />}
             {activeView === 'genesis-progress' && <GenesisProgressView />}
             {activeView === 'about' && <AboutView />}
+            {activeView === 'deep-search' && <DeepSearchView />}
           </div>
         </div>
       )}

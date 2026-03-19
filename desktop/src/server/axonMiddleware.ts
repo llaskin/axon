@@ -1142,6 +1142,113 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         return
       }
 
+      // POST /api/axon/search/deep — AI-powered semantic search across sessions
+      if (url === '/api/axon/search/deep' && req.method === 'POST') {
+        const body = await new Promise<string>((resolve) => {
+          let data = ''
+          req.on('data', (chunk: Buffer) => { data += chunk.toString() })
+          req.on('end', () => resolve(data))
+        })
+
+        const { prompt, continueSession } = JSON.parse(body) as {
+          prompt: string
+          continueSession?: boolean
+        }
+
+        res.setHeader('Content-Type', 'text/event-stream')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.setHeader('Connection', 'keep-alive')
+
+        const claudeHome = join(process.env.HOME || homedir(), '.claude')
+        const projectsDir = join(claudeHome, 'projects')
+        const axonHome = AXON_HOME
+
+        // Build the search system prompt
+        const systemPrompt = [
+          'You are Axon Deep Search — a read-only search agent for Claude Code session history.',
+          '',
+          'IMPORTANT DISCLAIMER: You must begin your first response with:',
+          '"🔍 **Deep Search** — I\'m searching your Claude Code session history. I have read-only access to session files. Results are best-effort."',
+          '',
+          '## Your Capabilities',
+          '- Search through Claude Code session JSONL files for conversations matching the user\'s query',
+          '- Use semantic understanding to expand vague queries into concrete search terms',
+          '- Read session files to find relevant conversations',
+          '',
+          '## Session Data Structure',
+          `- Sessions are stored as JSONL files in: ${projectsDir}/`,
+          '- Each project has a folder named by its path (e.g., -Users-rob-Github-axon-jarvis/)',
+          '- Each session is a .jsonl file named by session ID',
+          '- Each line is a JSON object with fields: type ("user"|"assistant"|"system"), message.content, timestamp',
+          '',
+          '## SQLite FTS5 Index',
+          `- Database at: ${join(axonHome, 'sessions.db')}`,
+          '- Table: session_fts (session_id, project_name, content) — full-text search with porter stemming',
+          '- Table: sessions (id, project_name, first_prompt, message_count, created_at, modified_at, etc.)',
+          '- Query FTS: SELECT s.id, s.project_name, s.first_prompt, snippet(session_fts, 2, \'<mark>\', \'</mark>\', \'…\', 40) as snippet FROM session_fts JOIN sessions s ON s.id = session_fts.session_id WHERE session_fts MATCH \'query\' ORDER BY rank LIMIT 20',
+          '',
+          '## Output Format',
+          'When you find relevant sessions, reference them using this EXACT format:',
+          '[[session:SESSION_ID|PROJECT_NAME|DATE|"Brief description of what was discussed"]]',
+          '',
+          'Example: [[session:abc123def|axon|2026-03-18|"Discussed remote access architecture and thin client model"]]',
+          '',
+          'The UI will render these as clickable links. Always include them when you find matches.',
+          '',
+          '## Rules',
+          '1. You are READ-ONLY. Never create, modify, or delete any files.',
+          '2. Use Bash with sqlite3 to query the FTS index first (fast). Fall back to Grep/Read for deeper search.',
+          '3. If the user\'s query is vague, expand it into multiple search terms and try each.',
+          '4. Show the most relevant results first. Include the actual matching text when possible.',
+          '5. If you find nothing, say so clearly and suggest alternative search terms.',
+        ].join('\n')
+
+        const args = continueSession
+          ? ['--continue', '-p', prompt, '--allowedTools', 'Read,Glob,Grep,Bash']
+          : ['-p', prompt, '--system-prompt', systemPrompt, '--allowedTools', 'Read,Glob,Grep,Bash']
+
+        // Use a dedicated project path to avoid polluting other projects
+        args.push('--project-path', '/axon/search')
+
+        const cleanEnv = { ...process.env }
+        delete cleanEnv.CLAUDECODE
+        delete cleanEnv.CLAUDE_CODE_SESSION
+
+        const child = spawn('claude', args, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: cleanEnv,
+        })
+
+        child.stdout.on('data', (data: Buffer) => {
+          const text = data.toString()
+          res.write(`data: ${JSON.stringify({ type: 'content', text })}\n\n`)
+        })
+
+        child.stderr.on('data', () => {
+          // Claude CLI progress — ignore
+        })
+
+        await new Promise<void>((resolve) => {
+          child.on('close', (code) => {
+            res.write(`data: ${JSON.stringify({ type: 'done', code })}\n\n`)
+            res.end()
+            resolve()
+          })
+
+          child.on('error', (err) => {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`)
+            res.end()
+            resolve()
+          })
+
+          req.on('close', () => {
+            if (!child.killed) child.kill()
+            resolve()
+          })
+        })
+        return
+      }
+
       // POST /api/axon/agent — streaming Claude agent with tool visibility
       if (url === '/api/axon/agent' && req.method === 'POST') {
         const body = await new Promise<string>((resolve) => {

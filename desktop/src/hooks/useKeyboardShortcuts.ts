@@ -52,6 +52,13 @@ export function useKeyboardShortcuts(onTogglePalette: () => void) {
         return
       }
 
+      // Cmd+Shift+F: deep search
+      if (meta && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        setView('deep-search')
+        return
+      }
+
       // Cmd+Shift+G: jump to Source Control
       if (meta && e.shiftKey && (e.key === 'g' || e.key === 'G')) {
         e.preventDefault()

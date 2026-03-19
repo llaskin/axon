@@ -1,13 +1,13 @@
 import { create } from 'zustand'
 
-export type ViewId = 'timeline' | 'state' | 'decisions' | 'settings' | 'rollup-detail' | 'morning' | 'onboarding' | 'terminal' | 'agents' | 'todos' | 'source' | 'about' | 'genesis-progress'
+export type ViewId = 'timeline' | 'state' | 'decisions' | 'settings' | 'rollup-detail' | 'morning' | 'onboarding' | 'terminal' | 'agents' | 'todos' | 'source' | 'about' | 'genesis-progress' | 'deep-search'
 
 // Sidebar order — used to determine swipe direction
 const VIEW_ORDER: Record<ViewId, number> = {
   'morning': 0, 'agents': 1, 'timeline': 2,
   'source': 3, 'todos': 4, 'terminal': 5, 'settings': 6,
   'about': 7,
-  'state': 8, 'decisions': 9, 'rollup-detail': 10, 'onboarding': 11, 'genesis-progress': 12,
+  'state': 8, 'decisions': 9, 'rollup-detail': 10, 'onboarding': 11, 'genesis-progress': 12, 'deep-search': 13,
 }
 
 function getSwipeDir(from: ViewId, to: ViewId): 'left' | 'right' | 'none' {

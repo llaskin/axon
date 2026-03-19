@@ -163,6 +163,24 @@ export function TerminalView({
     return () => disposable.dispose()
   }, [terminalId, status, sendInput, fit])
 
+  // Handle resume requests — if a terminal is already running, restart it with the resume ID
+  const lastResumeRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!resumeSessionId || resumeSessionId === lastResumeRef.current) return
+    lastResumeRef.current = resumeSessionId
+
+    if (spawnedRef.current) {
+      // Terminal already running — restart with resume
+      kill()
+      spawnedRef.current = false
+      setTimeout(() => {
+        spawnedRef.current = true
+        spawn(project, resumeSessionId)
+        onClearResume?.()
+      }, 200)
+    }
+  }, [resumeSessionId, project, spawn, kill, onClearResume])
+
   // Auto-spawn on mount
   useEffect(() => {
     if (spawnedRef.current || !project || status !== 'idle') return

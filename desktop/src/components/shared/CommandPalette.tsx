@@ -1,25 +1,46 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useProjectStore } from '@/store/projectStore'
 import { useUIStore } from '@/store/uiStore'
-import { Clock, Layers, Brain, Settings, Sun, Moon, FolderOpen, Coffee, Terminal } from 'lucide-react'
+import { Clock, Layers, Brain, Settings, Sun, Moon, FolderOpen, Coffee, Terminal, Search, Sparkles, MessageSquare } from 'lucide-react'
 
 interface Command {
   id: string
   label: string
-  category: 'navigation' | 'project' | 'action'
+  category: 'navigation' | 'project' | 'action' | 'session'
   icon: typeof Clock
   action: () => void
   keywords?: string
+  detail?: string
+  snippet?: string
+  meta?: string
+}
+
+interface SessionResult {
+  id: string
+  project_name: string
+  first_prompt: string | null
+  heuristic_summary: string | null
+  message_count: number
+  estimated_cost_usd: number | null
+  created_at: string | null
+  modified_at: string | null
+  git_branch: string | null
+  snippet: string
+  custom_title?: string | null
+  nickname?: string | null
 }
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
+  const [sessionResults, setSessionResults] = useState<SessionResult[]>([])
+  const [searching, setSearching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { projects, setActiveProject } = useProjectStore()
-  const { setView, theme, toggleTheme } = useUIStore()
+  const { setView, theme, toggleTheme, openTerminal } = useUIStore()
 
   // Build command list
   const commands = useMemo<Command[]>(() => {
@@ -51,8 +72,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     return cmds
   }, [projects, setActiveProject, setView, theme, toggleTheme, onClose])
 
-  // Filter by query
-  const filtered = useMemo(() => {
+  // Filter commands by query
+  const filteredCommands = useMemo(() => {
     if (!query.trim()) return commands
     const q = query.toLowerCase()
     return commands.filter(c =>
@@ -62,16 +83,67 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     )
   }, [commands, query])
 
-  // Reset selection when filtered list changes
+  // Convert session results to Command items
+  const sessionCommands = useMemo<Command[]>(() => {
+    return sessionResults.map(s => {
+      const title = s.nickname || s.custom_title || s.first_prompt || 'Untitled session'
+      const date = s.modified_at ? new Date(s.modified_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''
+      return {
+        id: `session-${s.id}`,
+        label: title.length > 60 ? title.slice(0, 57) + '…' : title,
+        category: 'session' as const,
+        icon: MessageSquare,
+        action: () => {
+          setActiveProject(s.project_name)
+          openTerminal(s.id)
+          onClose()
+        },
+        detail: s.snippet,
+        meta: `${s.project_name} · ${date}`,
+      }
+    })
+  }, [sessionResults, setView, onClose])
+
+  // Combined list: commands first, then sessions
+  const allItems = useMemo(() => [...filteredCommands, ...sessionCommands], [filteredCommands, sessionCommands])
+
+  // Debounced FTS5 search
+  const searchSessions = useCallback((q: string) => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    if (q.trim().length < 2) {
+      setSessionResults([])
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/axon/sessions/search?q=${encodeURIComponent(q)}`)
+        if (res.ok) {
+          const data = await res.json()
+          setSessionResults((data.results || []).slice(0, 8))
+        }
+      } catch { /* ignore */ }
+      setSearching(false)
+    }, 250)
+  }, [])
+
+  // Trigger search when query changes
+  useEffect(() => {
+    searchSessions(query)
+  }, [query, searchSessions])
+
+  // Reset selection when list changes
   useEffect(() => {
     setSelectedIdx(0)
-  }, [filtered.length])
+  }, [allItems.length])
 
   // Focus input when opened
   useEffect(() => {
     if (open) {
       setQuery('')
       setSelectedIdx(0)
+      setSessionResults([])
       setTimeout(() => inputRef.current?.focus(), 50)
     }
   }, [open])
@@ -79,10 +151,15 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   // Scroll selected item into view
   useEffect(() => {
     if (listRef.current) {
-      const selected = listRef.current.children[selectedIdx] as HTMLElement
+      const selected = listRef.current.querySelector('[aria-selected="true"]') as HTMLElement
       selected?.scrollIntoView({ block: 'nearest' })
     }
   }, [selectedIdx])
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current) }
+  }, [])
 
   if (!open) return null
 
@@ -93,7 +170,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setSelectedIdx(i => Math.min(i + 1, filtered.length - 1))
+      setSelectedIdx(i => Math.min(i + 1, allItems.length))  // +1 for deep search button
       return
     }
     if (e.key === 'ArrowUp') {
@@ -101,9 +178,15 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       setSelectedIdx(i => Math.max(i - 1, 0))
       return
     }
-    if (e.key === 'Enter' && filtered[selectedIdx]) {
+    if (e.key === 'Enter') {
       e.preventDefault()
-      filtered[selectedIdx].action()
+      if (selectedIdx < allItems.length && allItems[selectedIdx]) {
+        allItems[selectedIdx].action()
+      } else if (selectedIdx === allItems.length && query.trim()) {
+        // Deep search button selected
+        setView('deep-search')
+        onClose()
+      }
       return
     }
   }
@@ -112,13 +195,14 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     navigation: 'Views',
     project: 'Projects',
     action: 'Actions',
+    session: 'Sessions',
   }
 
   // Group by category
   const grouped: Array<{ category: string; items: Array<Command & { globalIdx: number }> }> = []
   let globalIdx = 0
   const seen = new Set<string>()
-  for (const cmd of filtered) {
+  for (const cmd of allItems) {
     if (!seen.has(cmd.category)) {
       seen.add(cmd.category)
       grouped.push({ category: cmd.category, items: [] })
@@ -127,6 +211,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     group.items.push({ ...cmd, globalIdx })
     globalIdx++
   }
+
+  const hasQuery = query.trim().length >= 2
+  const showDeepSearch = hasQuery
 
   return (
     <>
@@ -147,26 +234,29 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         <div className="bg-ax-elevated rounded-xl border border-ax-border shadow-[0_20px_60px_rgba(0,0,0,0.3)] overflow-hidden">
           {/* Search input */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-ax-border-subtle">
-            <span className="text-ax-text-tertiary" aria-hidden="true">⌘</span>
+            <Search size={14} className="text-ax-text-tertiary shrink-0" aria-hidden="true" />
             <input
               ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type a command..."
-              aria-label="Search commands"
+              placeholder="Search commands, projects, sessions..."
+              aria-label="Search"
               className="flex-1 bg-transparent text-body text-ax-text-primary placeholder-ax-text-tertiary
                 focus:outline-none"
             />
+            {searching && (
+              <div className="w-3 h-3 border border-ax-brand/40 border-t-ax-brand rounded-full animate-spin" />
+            )}
             <kbd className="font-mono text-micro text-ax-text-tertiary bg-ax-sunken px-1.5 py-0.5 rounded">esc</kbd>
           </div>
 
           {/* Results */}
-          <div ref={listRef} className="max-h-[300px] overflow-y-auto py-2" role="listbox">
-            {filtered.length === 0 && (
-              <div className="px-4 py-8 text-center text-small text-ax-text-tertiary">
-                No commands matching "{query}"
+          <div ref={listRef} className="max-h-[400px] overflow-y-auto py-2" role="listbox">
+            {allItems.length === 0 && !searching && hasQuery && (
+              <div className="px-4 py-6 text-center text-small text-ax-text-tertiary">
+                No results for "{query}"
               </div>
             )}
 
@@ -182,21 +272,59 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                     aria-selected={cmd.globalIdx === selectedIdx}
                     onClick={cmd.action}
                     onMouseEnter={() => setSelectedIdx(cmd.globalIdx)}
-                    className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors
+                    className={`w-full flex flex-col gap-0.5 px-4 py-2 text-left transition-colors
                       ${cmd.globalIdx === selectedIdx
                         ? 'bg-ax-brand/10 text-ax-text-primary'
                         : 'text-ax-text-secondary hover:bg-ax-sunken'
                       }`}
                   >
-                    <cmd.icon size={16} strokeWidth={1.5} className="shrink-0 text-ax-text-tertiary" aria-hidden="true" />
-                    <span className="text-body">{cmd.label}</span>
-                    {cmd.category === 'project' && (
-                      <span className="ml-auto font-mono text-micro text-ax-text-tertiary">project</span>
+                    <div className="flex items-center gap-3">
+                      <cmd.icon size={14} strokeWidth={1.5} className="shrink-0 text-ax-text-tertiary" aria-hidden="true" />
+                      <span className="text-body truncate">{cmd.label}</span>
+                      {cmd.category === 'project' && (
+                        <span className="ml-auto font-mono text-micro text-ax-text-tertiary">project</span>
+                      )}
+                      {cmd.meta && (
+                        <span className="ml-auto font-mono text-micro text-ax-text-tertiary shrink-0">{cmd.meta}</span>
+                      )}
+                    </div>
+                    {cmd.detail && (
+                      <div
+                        className="pl-[26px] font-mono text-[10px] text-ax-text-tertiary truncate"
+                        dangerouslySetInnerHTML={{ __html: cmd.detail }}
+                      />
                     )}
                   </button>
                 ))}
               </div>
             ))}
+
+            {/* Deep Search CTA */}
+            {showDeepSearch && (
+              <>
+                <div className="mx-4 my-1 border-t border-ax-border-subtle" />
+                <button
+                  role="option"
+                  aria-selected={selectedIdx === allItems.length}
+                  onClick={() => {
+                    // Store the query for the deep search view
+                    sessionStorage.setItem('axon-deep-search-query', query)
+                    setView('deep-search')
+                    onClose()
+                  }}
+                  onMouseEnter={() => setSelectedIdx(allItems.length)}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors
+                    ${selectedIdx === allItems.length
+                      ? 'bg-ax-brand/10 text-ax-brand'
+                      : 'text-ax-text-tertiary hover:bg-ax-sunken hover:text-ax-brand'
+                    }`}
+                >
+                  <Sparkles size={14} strokeWidth={1.5} className="shrink-0" />
+                  <span className="text-body">Deep search with AI</span>
+                  <span className="ml-auto font-mono text-micro opacity-60">⇧⌘F</span>
+                </button>
+              </>
+            )}
           </div>
 
           {/* Footer hints */}

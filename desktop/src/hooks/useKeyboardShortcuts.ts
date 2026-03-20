@@ -2,8 +2,8 @@ import { useEffect } from 'react'
 import { useUIStore, type ViewId } from '@/store/uiStore'
 import { useProjectStore } from '@/store/projectStore'
 
-// Settings excluded from arrow-key carousel — accessible via Cmd+7 or sidebar click
-const NAV_VIEWS: ViewId[] = ['morning', 'agents', 'timeline', 'source', 'todos', 'terminal']
+// Terminal + Settings excluded from arrow-key carousel — accessible via Cmd+6/7 or sidebar click
+const NAV_VIEWS: ViewId[] = ['morning', 'agents', 'timeline', 'source', 'todos']
 
 /**
  * Global keyboard shortcuts:

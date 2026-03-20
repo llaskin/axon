@@ -125,18 +125,21 @@ function ViewRouter() {
   const swipeDir = useUIStore(s => s.viewSwipeDirection)
   const { projects, activeProject } = useProjectStore()
 
-  // Genesis guard: redirect based on project initialization state
+  // Genesis guard: redirect to onboarding for uninitialized projects
+  // Only depends on specific project fields, not the entire projects array reference
+  const activeProjectData = projects.find(p => p.name === activeProject)
+  const episodeCount = activeProjectData?.episodeCount ?? -1
+  const genesisStatus = activeProjectData?.genesisStatus
   useEffect(() => {
-    if (!activeProject) return
-    const proj = projects.find(p => p.name === activeProject)
-    if (proj && proj.episodeCount === 0 && !ALLOWED_UNINITIALIZED.has(activeView)) {
-      if (proj.genesisStatus === 'running') {
+    if (!activeProject || episodeCount < 0) return
+    if (episodeCount === 0 && !ALLOWED_UNINITIALIZED.has(activeView)) {
+      if (genesisStatus === 'running') {
         setView('genesis-progress')
       } else {
         setView('onboarding')
       }
     }
-  }, [activeProject, activeView, projects, setView])
+  }, [activeProject, episodeCount, genesisStatus, activeView, setView])
 
   const loading = useProjectStore(s => s.loading)
   const noProjects = !loading && projects.length === 0

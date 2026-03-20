@@ -58,7 +58,7 @@ export const useUIStore = create<UIStore>((set) => ({
     return { theme: next }
   }),
   setView: (view) => set(s => {
-    if (view === s.activeView) return s // no-op guard
+    if (view === s.activeView) return {} // no-op — empty merge, no re-render
     return {
       activeView: view,
       previousView: s.activeView,

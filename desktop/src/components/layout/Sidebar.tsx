@@ -66,6 +66,9 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
     return items
   }, [activeProjects, dragIdx, overIdx])
 
+  const dragPointerId = useRef<number | null>(null)
+  const dragCaptureEl = useRef<HTMLElement | null>(null)
+
   const handlePointerDown = useCallback((e: React.PointerEvent, idx: number) => {
     // Only left button
     if (e.button !== 0) return
@@ -73,13 +76,19 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
     dragThreshold.current = false
     setDragIdx(idx)
     setOverIdx(idx)
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    // Defer pointer capture until drag threshold crossed
+    dragPointerId.current = e.pointerId
+    dragCaptureEl.current = e.currentTarget as HTMLElement
   }, [])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (dragIdx === null || !listRef.current) return
     const dy = Math.abs(e.clientY - dragStartY.current)
     if (!dragThreshold.current && dy < 5) return
+    // Capture pointer only once drag actually starts
+    if (!dragThreshold.current && dragCaptureEl.current && dragPointerId.current !== null) {
+      try { dragCaptureEl.current.setPointerCapture(dragPointerId.current) } catch {}
+    }
     dragThreshold.current = true
 
     // Determine which index we're over based on Y position
@@ -95,7 +104,14 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
     setOverIdx(closest)
   }, [dragIdx])
 
-  const handlePointerUp = useCallback(() => {
+  const handlePointerUp = useCallback((_e: React.PointerEvent) => {
+    // Explicitly release pointer capture
+    if (dragCaptureEl.current && dragPointerId.current !== null) {
+      try { dragCaptureEl.current.releasePointerCapture(dragPointerId.current) } catch {}
+    }
+    dragCaptureEl.current = null
+    dragPointerId.current = null
+
     if (dragIdx !== null && overIdx !== null && dragThreshold.current && dragIdx !== overIdx) {
       const reordered = getDragOrder()
       reorderProjects(reordered.map(p => p.name))

@@ -20,12 +20,16 @@ export function useKeyboardShortcuts(onTogglePalette: () => void) {
     const handler = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey
 
-      // Cmd+K: command palette
+      // Cmd+K: command palette (always works, even in inputs)
       if (meta && e.key === 'k') {
         e.preventDefault()
         onTogglePalette()
         return
       }
+
+      // Don't intercept navigation shortcuts when typing in inputs/textareas
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
 
       // Cmd+Left/Right: navigate between sidebar views
       if (meta && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {

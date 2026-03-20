@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useProjects } from '@/hooks/useProjects'
 import { useProjectStore } from '@/store/projectStore'
 import { useUIStore, type ViewId } from '@/store/uiStore'
-import { useDebugStore } from '@/store/debugStore'
+import { useDebugStore, maskProjectName } from '@/store/debugStore'
 import { useDiscoveredRepos } from '@/hooks/useDiscoveredRepos'
 import { Clock, Settings, Search, Sun, Moon, Coffee, Plus, Terminal, Brain, PanelLeftClose, PanelLeftOpen, Keyboard, CheckSquare, GitBranch, GripVertical, HelpCircle, X, Globe } from 'lucide-react'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
@@ -152,6 +152,18 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
     })
     return () => debugUnregister('shortcut-hints')
   }, [hintsDismissed, debugRegister, debugUnregister])
+
+  const screenshotMode = useDebugStore(s => s.screenshotMode)
+  const toggleScreenshotMode = useDebugStore(s => s.toggleScreenshotMode)
+  useEffect(() => {
+    debugRegister({
+      id: 'screenshot-mode',
+      label: `Screenshot mode (${screenshotMode ? 'on' : 'off'})`,
+      active: screenshotMode,
+      toggle: toggleScreenshotMode,
+    })
+    return () => debugUnregister('screenshot-mode')
+  }, [screenshotMode, toggleScreenshotMode, debugRegister, debugUnregister])
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const shortcutsRef = useRef<HTMLDivElement>(null)
@@ -304,7 +316,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
                   p.status === 'active' ? 'bg-ax-accent' :
                   p.status === 'paused' ? 'bg-ax-warning' : 'bg-ax-text-tertiary'
                 } ${isToday && !isGenesis ? 'animate-pulse-dot' : ''}`} aria-hidden="true" />
-                <span className="font-mono text-micro truncate">{p.name}</span>
+                <span className="font-mono text-micro truncate">{maskProjectName(p.name, screenshotMode)}</span>
                 {isGenesis ? (
                   <span className="ml-auto font-mono text-[9px] text-[var(--ax-brand-primary)] opacity-60">init...</span>
                 ) : p.openLoopCount > 0 ? (

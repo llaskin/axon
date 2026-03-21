@@ -291,7 +291,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                     {cmd.detail && (
                       <div
                         className="pl-[26px] font-mono text-[10px] text-ax-text-tertiary truncate"
-                        dangerouslySetInnerHTML={{ __html: cmd.detail }}
+                        dangerouslySetInnerHTML={{ __html: cmd.detail.replace(/<(?!\/?mark>)[^>]+>/gi, '') }}
                       />
                     )}
                   </button>

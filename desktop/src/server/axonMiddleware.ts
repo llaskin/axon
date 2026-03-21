@@ -162,6 +162,7 @@ function writeServerConfig(axonHome: string, cfg: ServerConfig) {
 
 /* ── Session token store (in-memory, survives hot reloads via module scope) ── */
 const sessionTokens = new Map<string, number>() // token → created timestamp
+let activeDeepSearches = 0 // concurrency cap for /api/axon/search/deep
 const SESSION_TTL = 24 * 60 * 60 * 1000 // 24 hours
 const failedAttempts = new Map<string, { count: number; lastAttempt: number }>()
 
@@ -1155,6 +1156,21 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           continueSession?: boolean
         }
 
+        // Validate prompt
+        if (!prompt || typeof prompt !== 'string' || prompt.length > 10000) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: 'Invalid or too-long prompt' }))
+          return
+        }
+
+        // Concurrency limit — max 2 deep search processes
+        if (activeDeepSearches >= 2) {
+          res.statusCode = 429
+          res.end(JSON.stringify({ error: 'Too many concurrent searches. Try again shortly.' }))
+          return
+        }
+        activeDeepSearches++
+
         res.setHeader('Content-Type', 'text/event-stream')
         res.setHeader('Cache-Control', 'no-cache')
         res.setHeader('Connection', 'keep-alive')
@@ -1255,6 +1271,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
 
         await new Promise<void>((resolve) => {
           child.on('close', (code) => {
+            activeDeepSearches = Math.max(0, activeDeepSearches - 1)
             if (code !== 0 && searchStderr.trim()) {
               res.write(`data: ${JSON.stringify({ type: 'content', text: `\n\n**Search failed** (exit ${code}): ${searchStderr.trim().slice(0, 500)}` })}\n\n`)
             }
@@ -2116,7 +2133,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
           }))
           res.end(JSON.stringify({ results: enriched }))
         } catch (err) {
-          res.end(JSON.stringify({ results: [], error: String(err) }))
+          res.end(JSON.stringify({ results: [], error: 'Search failed' }))
         }
         return
       }

@@ -64,12 +64,25 @@ export function MorningView() {
 
   const activeProjectData = projects.find(p => p.name === activeProject)
 
-  // Scroll to bottom on new messages
+  // Scroll to bottom on new messages — only if user hasn't scrolled up
+  const userScrolledUp = useRef(false)
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    if (scrollRef.current && !userScrolledUp.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
     }
   }, [messages])
+
+  // Track manual scroll — if user scrolls up, stop auto-scrolling
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const handleScroll = () => {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+      userScrolledUp.current = !atBottom
+    }
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [])
 
   // Load past sessions
   useEffect(() => {

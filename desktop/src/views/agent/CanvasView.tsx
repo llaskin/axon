@@ -838,6 +838,88 @@ export function CanvasView({
     setDroppedTileId(sessionId)
   }, [onAddTile, onAssignTileZone, findZoneAtWorldPoint])
 
+  /* ── Keyboard navigation (a11y) ────────────────────────────────── */
+
+  const [focusedTileIdx, setFocusedTileIdx] = useState(-1)
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const PAN_STEP = 50
+    const ZOOM_STEP = 0.1
+    const v = viewportRef.current
+
+    switch (e.key) {
+      case 'ArrowUp':
+        e.preventDefault()
+        v.y += PAN_STEP
+        requestAnimationFrame(applyViewport)
+        break
+      case 'ArrowDown':
+        e.preventDefault()
+        v.y -= PAN_STEP
+        requestAnimationFrame(applyViewport)
+        break
+      case 'ArrowLeft':
+        e.preventDefault()
+        v.x += PAN_STEP
+        requestAnimationFrame(applyViewport)
+        break
+      case 'ArrowRight':
+        e.preventDefault()
+        v.x -= PAN_STEP
+        requestAnimationFrame(applyViewport)
+        break
+      case '+':
+      case '=':
+        v.scale = Math.min(MAX_SCALE, v.scale + ZOOM_STEP)
+        requestAnimationFrame(() => { applyViewport(); updateScaleClass() })
+        break
+      case '-':
+        v.scale = Math.max(MIN_SCALE, v.scale - ZOOM_STEP)
+        requestAnimationFrame(() => { applyViewport(); updateScaleClass() })
+        break
+      case 'Tab': {
+        if (tiles.length === 0) break
+        e.preventDefault()
+        const next = e.shiftKey
+          ? (focusedTileIdx <= 0 ? tiles.length - 1 : focusedTileIdx - 1)
+          : (focusedTileIdx >= tiles.length - 1 ? 0 : focusedTileIdx + 1)
+        setFocusedTileIdx(next)
+        // Pan to focused tile
+        const tile = tiles[next]
+        if (tile) {
+          const pos = tilePositionMap.get(tile.sessionId)
+          if (pos) {
+            const container = containerRef.current
+            if (container) {
+              const rect = container.getBoundingClientRect()
+              v.x = rect.width / 2 - pos.x * v.scale
+              v.y = rect.height / 2 - pos.y * v.scale
+              requestAnimationFrame(applyViewport)
+            }
+          }
+        }
+        break
+      }
+      case 'Enter': {
+        if (focusedTileIdx >= 0 && focusedTileIdx < tiles.length) {
+          const tile = tiles[focusedTileIdx]
+          // Simulate click on tile
+          const store = useTerminalStore.getState()
+          const termId = store.canvasTerminals[tile.sessionId]
+          if (!termId && activeProject) {
+            const isNew = tile.sessionId.startsWith('new-')
+            dispatchTiles({ type: 'RESIZE', sessionId: tile.sessionId, width: TILE_EXPANDED_W, height: TILE_EXPANDED_H })
+            store.spawn(activeProject, isNew ? undefined : tile.sessionId).then(tid => {
+              useTerminalStore.getState().expandCanvasTile(tile.sessionId, tid)
+              if (isNew) detectSessionId(tile.sessionId, Date.now())
+            })
+          }
+        }
+        break
+      }
+    }
+  }, [applyViewport, updateScaleClass, tiles, focusedTileIdx, tilePositionMap, activeProject, dispatchTiles, detectSessionId])
+
   /* ── Render ───────────────────────────────────────────────────── */
 
   return (
@@ -845,8 +927,12 @@ export function CanvasView({
       ref={containerRef}
       className="flex-1 min-h-0 relative overflow-hidden touch-none"
       data-canvas-container
+      tabIndex={0}
+      role="application"
+      aria-label="Session canvas — use arrow keys to pan, +/- to zoom, Tab to cycle tiles, Enter to open"
       style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
       onMouseDown={handleMouseDown}
+      onKeyDown={handleKeyDown}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >

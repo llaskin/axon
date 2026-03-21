@@ -63,7 +63,7 @@ export function spawnTerminal(cwd: string, _command?: string, sessionId?: string
   // Clean env: remove CLAUDECODE to prevent nested session guard
   const cleanEnv: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
-    if (k !== 'CLAUDECODE' && k !== 'CLAUDE_CODE_SESSION' && v != null) {
+    if (!k.startsWith('CLAUDE') && v != null) {
       cleanEnv[k] = v
     }
   }

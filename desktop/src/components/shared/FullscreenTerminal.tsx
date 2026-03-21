@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Minimize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useTerminalStore } from '@/store/terminalStore'
 import { Terminal } from '@xterm/xterm'
@@ -140,8 +141,22 @@ export function FullscreenTerminal({ terminalId, onClose }: Props) {
     return () => clearTimeout(t)
   }, [doFit])
 
-  return (
-    <div className="fixed inset-0 z-[80] bg-[#1a1714] flex flex-col safe-area-top safe-area-bottom animate-fade-in">
+  // Track visual viewport height for mobile keyboard
+  const [vpHeight, setVpHeight] = useState<number | null>(null)
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const update = () => setVpHeight(vv.height)
+    vv.addEventListener('resize', update)
+    update()
+    return () => vv.removeEventListener('resize', update)
+  }, [])
+
+  const content = (
+    <div
+      className="fixed inset-x-0 top-0 z-[200] bg-[#1a1714] flex flex-col safe-area-top animate-fade-in"
+      style={{ height: vpHeight ? `${vpHeight}px` : '100dvh' }}
+    >
       {/* Header — z-10 above terminal to receive taps */}
       <div
         className="flex items-center justify-between px-4 py-2 bg-[#231f1b] border-b border-white/10 min-h-[48px] relative z-10"
@@ -197,4 +212,7 @@ export function FullscreenTerminal({ terminalId, onClose }: Props) {
       />
     </div>
   )
+
+  // Portal to document.body to escape all stacking contexts
+  return createPortal(content, document.body)
 }

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useCallback } from 'react'
-import { X, Minimize2 } from 'lucide-react'
+import { useEffect, useRef, useCallback, useState } from 'react'
+import { X, Minimize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useTerminalStore } from '@/store/terminalStore'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -38,6 +38,7 @@ export function FullscreenTerminal({ terminalId, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const [fontSize, setFontSize] = useState(14)
   const attach = useTerminalStore(s => s.attach)
   const detach = useTerminalStore(s => s.detach)
   const sendInput = useTerminalStore(s => s.sendInput)
@@ -111,6 +112,17 @@ export function FullscreenTerminal({ terminalId, onClose }: Props) {
     }
   }, [terminalId, attach, detach, sendInput, sendResize])
 
+  // Sync font size changes to xterm
+  useEffect(() => {
+    const term = xtermRef.current
+    if (!term) return
+    term.options.fontSize = fontSize
+    doFit()
+  }, [fontSize, doFit])
+
+  const zoomIn = useCallback(() => setFontSize(s => Math.min(24, s + 2)), [])
+  const zoomOut = useCallback(() => setFontSize(s => Math.max(8, s - 2)), [])
+
   // Tap terminal container to focus (opens mobile keyboard)
   const handleTerminalTap = useCallback(() => {
     xtermRef.current?.focus()
@@ -138,14 +150,32 @@ export function FullscreenTerminal({ terminalId, onClose }: Props) {
         <span className="font-mono text-[11px] text-white/60 truncate">
           Terminal · {terminalId.slice(0, 12)}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={zoomOut}
+            onTouchEnd={(e) => { e.preventDefault(); zoomOut() }}
+            className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center text-white/50 active:text-white transition-colors rounded-lg active:bg-white/10"
+            aria-label="Zoom out"
+          >
+            <ZoomOut size={16} />
+          </button>
+          <span className="font-mono text-[10px] text-white/40 w-6 text-center">{fontSize}</span>
+          <button
+            onClick={zoomIn}
+            onTouchEnd={(e) => { e.preventDefault(); zoomIn() }}
+            className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center text-white/50 active:text-white transition-colors rounded-lg active:bg-white/10"
+            aria-label="Zoom in"
+          >
+            <ZoomIn size={16} />
+          </button>
+          <div className="w-px h-5 bg-white/10 mx-1" />
           <button
             onClick={onClose}
             onTouchEnd={(e) => { e.preventDefault(); onClose() }}
-            className="p-3 min-w-[48px] min-h-[48px] flex items-center justify-center text-white/50 active:text-white transition-colors rounded-lg active:bg-white/10"
+            className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center text-white/50 active:text-white transition-colors rounded-lg active:bg-white/10"
             aria-label="Minimize terminal"
           >
-            <Minimize2 size={18} />
+            <Minimize2 size={16} />
           </button>
           <button
             onClick={onClose}

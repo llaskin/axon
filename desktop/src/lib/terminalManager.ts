@@ -53,11 +53,19 @@ export function spawnTerminal(cwd: string, _command?: string, sessionId?: string
 
   // Determine the command to run inside the shell
   // Note: `command` parameter is ignored for security — only allow claude or claude --resume
+  // Prefer npm/standalone claude over Homebrew Cask (Cask native binary hangs in node-pty)
+  const claudeBin = (() => {
+    const { existsSync } = require('fs')
+    const npmClaude = join(process.env.HOME || '/Users/rob', '.local', 'bin', 'claude')
+    if (existsSync(npmClaude)) return npmClaude
+    return 'claude' // fallback to PATH
+  })()
+
   let cmd: string
   if (sessionId) {
-    cmd = `claude --resume ${sessionId}`
+    cmd = `${claudeBin} --resume ${sessionId}`
   } else {
-    cmd = 'claude'
+    cmd = claudeBin
   }
 
   // Clean env: remove CLAUDECODE to prevent nested session guard

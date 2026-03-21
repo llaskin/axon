@@ -247,3 +247,64 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }
   }),
 }))
+
+/* ── Auto-reconnect WebSockets on tab visibility change (mobile background tabs) ── */
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return
+
+    const state = useTerminalStore.getState()
+    for (const [terminalId, entry] of Object.entries(state.terminals)) {
+      if (entry.status !== 'error') continue
+      const int = internals.get(terminalId)
+      if (!int || int.ws?.readyState === WebSocket.OPEN) continue
+
+      // Attempt reconnect
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const token = getStoredToken()
+      const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
+      const ws = new WebSocket(`${protocol}//${location.host}/api/axon/terminal/ws?id=${terminalId}${tokenParam}`)
+      int.ws = ws
+
+      ws.onopen = () => {
+        useTerminalStore.setState(s => {
+          const e = s.terminals[terminalId]
+          if (!e) return s
+          return { terminals: { ...s.terminals, [terminalId]: { ...e, status: 'connected' } } }
+        })
+      }
+
+      ws.onmessage = (event) => {
+        const data = event.data as string
+        if (data.startsWith('{')) {
+          try {
+            const msg = JSON.parse(data)
+            if (msg.type === 'exit') {
+              useTerminalStore.setState(s => {
+                const e = s.terminals[terminalId]
+                if (!e) return s
+                return { terminals: { ...s.terminals, [terminalId]: { ...e, status: 'exited', exitCode: msg.exitCode } } }
+              })
+              return
+            }
+          } catch { /* not JSON */ }
+        }
+        bufferData(int, data)
+        for (const fn of int.dataListeners) fn(data)
+      }
+
+      ws.onerror = () => {
+        useTerminalStore.setState(s => {
+          const e = s.terminals[terminalId]
+          if (!e) return s
+          return { terminals: { ...s.terminals, [terminalId]: { ...e, status: 'error' } } }
+        })
+      }
+
+      ws.onclose = () => {
+        int.ws = null
+      }
+    }
+  })
+}

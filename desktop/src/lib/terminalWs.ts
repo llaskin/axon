@@ -7,13 +7,36 @@ import {
   consumeEarlyState,
 } from './terminalManager'
 
+const PING_INTERVAL = 10_000 // 10s — well under any idle timeout
+
 export function setupTerminalWs(wss: WebSocketServer): void {
+  // Server-side ping interval — keeps connections alive and detects dead clients
+  const aliveMap = new WeakMap<WebSocket, boolean>()
+
+  const pingTimer = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (!aliveMap.get(ws)) {
+        // Missed the last pong — connection is dead
+        ws.terminate()
+        continue
+      }
+      aliveMap.set(ws, false)
+      ws.ping()
+    }
+  }, PING_INTERVAL)
+
+  wss.on('close', () => clearInterval(pingTimer))
+
   wss.on('connection', (ws: WebSocket, _req: unknown, termId: string) => {
     const instance = getTerminal(termId)
     if (!instance) {
       ws.close(1008, 'Terminal not found')
       return
     }
+
+    // Mark alive for ping/pong keepalive
+    aliveMap.set(ws, true)
+    ws.on('pong', () => aliveMap.set(ws, true))
 
     setWsConnected(termId, true)
 

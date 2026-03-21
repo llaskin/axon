@@ -2518,6 +2518,11 @@ export function handleAxonUpgrade(
       socket.destroy()
       return
     }
+    // Remove any HTTP server timeout on this socket — it's now a long-lived WebSocket.
+    // Without this, Node.js / Vite may close the socket after its requestTimeout (often ~24s).
+    if ('setTimeout' in socket) {
+      (socket as import('net').Socket).setTimeout(0)
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req, termId)
     })

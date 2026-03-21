@@ -1,7 +1,9 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { Maximize2, Star, RefreshCw, Check, X, Pencil, Minus, Plus } from 'lucide-react'
 import { CanvasTerminal } from './CanvasTerminal'
+import { FullscreenTerminal } from '@/components/shared/FullscreenTerminal'
 import { useTerminalStore } from '@/store/terminalStore'
+import { useIsTouchDevice } from '@/hooks/useMediaQuery'
 import {
   GRID, TILE_W, TILE_H, TILE_EXPANDED_W, TILE_EXPANDED_H, TILE_MINIMIZED_W, TILE_MINIMIZED_H,
   snap, getZoneDepth, getDescendantZoneIds, isAncestorOf,
@@ -99,6 +101,8 @@ export function CanvasView({
   const zoomTextRef = useRef<HTMLSpanElement>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [hoverZoneId, setHoverZoneId] = useState<string | null>(null)
+  const [fullscreenTerminalId, setFullscreenTerminalId] = useState<string | null>(null)
+  const isTouch = useIsTouchDevice()
   const [droppedTileId, setDroppedTileId] = useState<string | null>(null)
   const [flashZoneId, setFlashZoneId] = useState<string | null>(null)
   const [editingTileId, setEditingTileId] = useState<string | null>(null)
@@ -596,23 +600,35 @@ export function CanvasView({
           const termId = store.canvasTerminals[sid]
           const expandState = store.canvasExpanded[sid]
 
+          // On touch devices, open fullscreen terminal instead of inline
+          if (isTouch) {
+            if (termId) {
+              setFullscreenTerminalId(termId)
+            } else if (activeProject) {
+              const isNew = sid.startsWith('new-')
+              dispatchTiles({ type: 'RESIZE', sessionId: sid, width: TILE_EXPANDED_W, height: TILE_EXPANDED_H })
+              store.spawn(activeProject, isNew ? undefined : sid).then(tid => {
+                useTerminalStore.getState().expandCanvasTile(sid, tid)
+                if (isNew) detectSessionId(sid, Date.now())
+                setFullscreenTerminalId(tid)
+              })
+            }
+            return
+          }
+
           if (termId && expandState === 'expanded') {
             // Check if terminal is actually alive — if exited, clean up and spawn fresh
             const termEntry = store.terminals[termId]
             if (termEntry?.status === 'exited' && activeProject) {
               store.killCanvasTerminal(sid)
-              // Always spawn fresh — don't re-attempt --resume on a failed session
               store.spawn(activeProject).then(tid => {
                 useTerminalStore.getState().expandCanvasTile(sid, tid)
                 detectSessionId(sid, Date.now())
               })
             }
-            // Otherwise truly expanded and alive — no-op
           } else if (termId && expandState === 'minimized') {
-            // Minimized — re-expand (no re-spawn, tile is already full size, just remove CSS scale)
             store.setTileExpanded(sid, true)
           } else if (activeProject) {
-            // Normal — spawn terminal and expand
             const isNew = sid.startsWith('new-')
             dispatchTiles({ type: 'RESIZE', sessionId: sid, width: TILE_EXPANDED_W, height: TILE_EXPANDED_H })
             store.spawn(activeProject, isNew ? undefined : sid).then(tid => {
@@ -1226,6 +1242,14 @@ export function CanvasView({
             </p>
           </div>
         </div>
+      )}
+
+      {/* Fullscreen terminal overlay (mobile) */}
+      {fullscreenTerminalId && (
+        <FullscreenTerminal
+          terminalId={fullscreenTerminalId}
+          onClose={() => setFullscreenTerminalId(null)}
+        />
       )}
     </div>
   )

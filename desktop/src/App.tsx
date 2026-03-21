@@ -22,6 +22,7 @@ import { AuthOverlay } from '@/components/shared/AuthOverlay'
 import { setAuthHandler, installAuthInterceptor } from '@/lib/apiClient'
 import { ErrorToast } from '@/components/shared/ErrorToast'
 import { useErrorStore } from '@/store/errorStore'
+import { useSwipeNavigation } from '@/hooks/useSwipeNavigation'
 import { Component, type ErrorInfo } from 'react'
 
 // Install global fetch interceptor ONCE — injects auth headers on all /api/axon/* calls
@@ -159,6 +160,10 @@ function ViewRouter() {
 
   const isSubView = !isStrip
 
+  // Swipe navigation on mobile
+  const swipeContainerRef = useRef<HTMLDivElement>(null)
+  useSwipeNavigation(swipeContainerRef)
+
   // Empty state: no projects after loading completes
   if (noProjects && activeView !== 'settings' && activeView !== 'onboarding') {
     return (
@@ -183,7 +188,7 @@ function ViewRouter() {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div ref={swipeContainerRef} className="relative h-full w-full overflow-hidden">
       {/* One horizontal strip — all views slide the same way */}
       <div className="relative h-full overflow-hidden">
         {EDITORIAL.has(activeView) && <EditorialNav activeView={activeView} />}

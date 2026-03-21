@@ -42,7 +42,7 @@ export const useErrorStore = create<ErrorStore>((set) => ({
     toastTimer = setTimeout(() => {
       set({ toast: null })
       toastTimer = null
-    }, 6000)
+    }, 20000) // WCAG 2.2.1 — minimum 20s for important content
 
     set(s => ({
       toast: entry,

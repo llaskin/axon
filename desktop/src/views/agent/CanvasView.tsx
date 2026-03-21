@@ -15,7 +15,7 @@ import type { SessionSummary } from '@/hooks/useSessions'
 
 const MIN_SCALE = 0.08
 const MAX_SCALE = 3
-const DRAG_THRESHOLD = 4
+const DRAG_THRESHOLD = 'ontouchstart' in globalThis ? 10 : 4
 const MINIMIZE_SCALE = 0.5
 
 const HEAT_COLORS: Record<string, string> = {
@@ -673,14 +673,98 @@ export function CanvasView({
       }
     }
 
+    // Touch handlers — mirror mouse handlers for mobile
+    const pinchRef = { initialDist: 0, initialScale: 1 }
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Pinch-to-zoom start
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        pinchRef.initialDist = Math.hypot(dx, dy)
+        pinchRef.initialScale = viewportRef.current.scale
+        dragRef.current = null // cancel any single-finger drag
+        return
+      }
+      if (e.touches.length !== 1) return
+      // Simulate mousedown with touch coordinates
+      const touch = e.touches[0]
+      handleMouseDown({
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        button: 0,
+        target: e.target,
+        currentTarget: e.currentTarget,
+        preventDefault: () => e.preventDefault(),
+      } as unknown as React.MouseEvent)
+    }
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Pinch-to-zoom
+        e.preventDefault()
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        const dist = Math.hypot(dx, dy)
+        if (pinchRef.initialDist === 0) return
+        const v = viewportRef.current
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+        const container = containerRef.current
+        if (!container) return
+        const rect = container.getBoundingClientRect()
+        const cx = midX - rect.left
+        const cy = midY - rect.top
+        const oldScale = v.scale
+        const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchRef.initialScale * (dist / pinchRef.initialDist)))
+        v.x = cx - (cx - v.x) * (newScale / oldScale)
+        v.y = cy - (cy - v.y) * (newScale / oldScale)
+        v.scale = newScale
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = requestAnimationFrame(() => {
+          applyViewport()
+          updateScaleClass()
+        })
+        return
+      }
+      if (e.touches.length !== 1) return
+      const touch = e.touches[0]
+      handleMouseMove({
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+      } as MouseEvent)
+    }
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length > 0) return // still touching
+      pinchRef.initialDist = 0
+      handleMouseUp({
+        clientX: e.changedTouches[0]?.clientX ?? 0,
+        clientY: e.changedTouches[0]?.clientY ?? 0,
+      } as MouseEvent)
+    }
+
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
+
+    const container = containerRef.current
+    if (container) {
+      container.addEventListener('touchstart', handleTouchStart, { passive: false })
+      container.addEventListener('touchmove', handleTouchMove, { passive: false })
+      container.addEventListener('touchend', handleTouchEnd)
+    }
+
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      if (container) {
+        container.removeEventListener('touchstart', handleTouchStart)
+        container.removeEventListener('touchmove', handleTouchMove)
+        container.removeEventListener('touchend', handleTouchEnd)
+      }
     }
   }, [zones, tiles, applyViewport, dispatchTiles, dispatchZones,
-      setViewport, scheduleSave, immediateSave, findZoneAtWorldPoint])
+      setViewport, scheduleSave, immediateSave, findZoneAtWorldPoint, handleMouseDown, updateScaleClass])
 
   /* ── Escape cancels reorg ─────────────────────────────────────── */
 

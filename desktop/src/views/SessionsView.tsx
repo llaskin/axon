@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useProjectStore } from '@/store/projectStore'
 import { useUIStore } from '@/store/uiStore'
 import { useSessions, useSessionSearch, type SessionSummary, type SearchResult } from '@/hooks/useSessions'
-import { Search, Globe, FolderOpen, GitBranch, MessageSquare, Wrench, DollarSign, Star, ChevronDown, FileText, Terminal as TerminalIcon, AlertCircle, Play, LayoutGrid, List } from 'lucide-react'
+import { Search, Globe, FolderOpen, GitBranch, MessageSquare, Wrench, DollarSign, Star, ChevronDown, FileText, Terminal as TerminalIcon, AlertCircle, Play, LayoutGrid, List, Maximize, Minimize } from 'lucide-react'
 import { CanvasView } from './agent/CanvasView'
 import { ZoneTree } from './agent/ZoneTree'
 import { useCanvasState } from './agent/useCanvasState'
@@ -700,7 +700,16 @@ function generateDemoData(): {
 export function SessionsView() {
   const activeProject = useProjectStore((s) => s.activeProject)
   const [mode, setMode] = useState<SessionsMode>('canvas')
+  const [fullscreen, setFullscreen] = useState(false)
   const [demoSessions, setDemoSessions] = useState<SessionSummary[]>([])
+
+  // Escape exits fullscreen
+  useEffect(() => {
+    if (!fullscreen) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false) }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [fullscreen])
 
   // Always fetch sessions (needed for both modes)
   const { sessions: realSessions, indexStatus, loading, error, refetch } = useSessions(activeProject)
@@ -752,8 +761,8 @@ export function SessionsView() {
 
   return (
     <div className="flex h-full">
-      {/* Zone tree sidebar — canvas mode only */}
-      {mode === 'canvas' && activeProject && (
+      {/* Zone tree sidebar — canvas mode only, hidden in fullscreen */}
+      {mode === 'canvas' && activeProject && !fullscreen && (
         <div className="hidden sm:block w-56 shrink-0 border-r border-ax-border bg-ax-elevated overflow-hidden">
           <ZoneTree
             sessions={sessions}
@@ -771,8 +780,18 @@ export function SessionsView() {
 
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header bar with mode toggle */}
-        <div className="shrink-0 flex items-center gap-2 px-4 py-1 border-b border-ax-border-subtle bg-ax-base">
+        {/* Header bar with mode toggle — hidden in fullscreen */}
+        {fullscreen ? (
+          <button
+            onClick={() => setFullscreen(false)}
+            className="absolute top-3 right-3 z-20 p-2 bg-ax-elevated/80 backdrop-blur-sm border border-ax-border-subtle rounded-lg
+              text-ax-text-tertiary hover:text-ax-text-primary transition-colors shadow-sm"
+            aria-label="Exit fullscreen"
+          >
+            <Minimize size={14} />
+          </button>
+        ) : null}
+        <div className={`shrink-0 flex items-center gap-2 px-4 py-1 border-b border-ax-border-subtle bg-ax-base ${fullscreen ? 'hidden' : ''}`}>
           <div className="flex items-center gap-0.5 bg-ax-sunken rounded-md p-0.5">
             <button
               onClick={() => setMode('canvas')}
@@ -805,9 +824,21 @@ export function SessionsView() {
               {activeProject}
             </span>
           )}
-          <span className="font-mono text-[10px] text-ax-text-ghost ml-auto">
-            {sessions.length}
-          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="font-mono text-[10px] text-ax-text-ghost">
+              {sessions.length}
+            </span>
+            {mode === 'canvas' && (
+              <button
+                onClick={() => setFullscreen(true)}
+                className="p-1 text-ax-text-ghost hover:text-ax-text-primary transition-colors"
+                aria-label="Fullscreen canvas"
+                title="Fullscreen canvas"
+              >
+                <Maximize size={12} />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Content */}

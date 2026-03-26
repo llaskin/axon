@@ -271,8 +271,8 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
         </button>
       )}
 
-      {/* Project Switcher */}
-      {!collapsed && (<>
+      {/* Project Switcher — removed, not applicable to Agent Sessions app */}
+      {false && !collapsed && (<>
         <div className="px-3 pb-3 mx-2 pt-3 rounded-xl bg-white/[0.03]" role="group" aria-label="Project switcher">
           <div className="flex items-center justify-between px-2 mb-2">
             <span className="text-micro font-mono uppercase tracking-widest text-[var(--ax-text-on-dark-muted)]">
@@ -395,7 +395,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette?: () => void }) {
       <nav className={`${collapsed ? 'px-1' : 'px-3'} pt-4 pb-2`} aria-label="Main views">
         {mainNav.map((item) => {
           const isActive = activeView === item.id || (item.id === 'timeline' && ['rollup-detail', 'state', 'decisions'].includes(activeView))
-          const disabled = isUninitialized
+          const disabled = false
           return (
             <button
               key={item.id}

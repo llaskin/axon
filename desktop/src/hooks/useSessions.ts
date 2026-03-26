@@ -85,6 +85,55 @@ export function useSessions(projectName: string | null) {
   return { sessions, indexStatus, loading, error, refetch: fetchSessions }
 }
 
+export interface ProjectGroup {
+  projectName: string
+  projectPath: string
+  sessions: SessionSummary[]
+  totalCost: number
+  lastActive: string | null
+}
+
+export function useSessionsByProject() {
+  const [projects, setProjects] = useState<ProjectGroup[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchProjects = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/axon/sessions/by-project')
+      const data = await res.json()
+      setProjects(data.projects || [])
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load projects')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchProjects() }, [fetchProjects])
+
+  return { projects, loading, error, refetch: fetchProjects }
+}
+
+export function usePromptTimeline(sessionId: string | null) {
+  const [prompts, setPrompts] = useState<Array<{ display: string; timestamp: number }>>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!sessionId) { setPrompts([]); return }
+    setLoading(true)
+    fetch(`/api/axon/sessions/${sessionId}/prompts`)
+      .then(r => r.json())
+      .then(data => setPrompts(data.prompts || []))
+      .catch(() => setPrompts([]))
+      .finally(() => setLoading(false))
+  }, [sessionId])
+
+  return { prompts, loading }
+}
+
 export function useSessionSearch(query: string) {
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)

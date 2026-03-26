@@ -2138,6 +2138,77 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         return
       }
 
+      // GET /api/axon/sessions/{id}/prompts — prompt timeline from history.jsonl
+      const promptsMatch = url.match(/^\/api\/axon\/sessions\/([0-9a-f-]{36})\/prompts$/)
+      if (promptsMatch) {
+        const sessionId = promptsMatch[1]
+        try {
+          const { PromptTimelineCache } = await import('../lib/promptTimeline')
+          const historyPath = join(homedir(), '.claude', 'history.jsonl')
+          // Lazily create / reuse a module-level cache
+          if (!(globalThis as any).__promptTimelineCache) {
+            (globalThis as any).__promptTimelineCache = new PromptTimelineCache(historyPath)
+          }
+          const cache = (globalThis as any).__promptTimelineCache as InstanceType<typeof PromptTimelineCache>
+          const prompts = cache.getPrompts(sessionId)
+          res.end(JSON.stringify({ prompts }))
+        } catch (err) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: String(err), prompts: [] }))
+        }
+        return
+      }
+
+      // GET /api/axon/sessions/by-project — sessions grouped by project
+      if (url === '/api/axon/sessions/by-project') {
+        try {
+          const { getSessions } = await import('../lib/sessionDb')
+          const { getAllSessionMeta } = await import('../lib/sessionMeta')
+          const allSessions = getSessions()
+          const meta = getAllSessionMeta()
+
+          const projectMap = new Map<string, {
+            projectName: string
+            projectPath: string
+            sessions: any[]
+            totalCost: number
+            lastActive: string | null
+          }>()
+
+          for (const s of allSessions) {
+            const name = s.project_name || 'Unknown'
+            const entry = projectMap.get(name) || {
+              projectName: name,
+              projectPath: s.project_path || '',
+              sessions: [],
+              totalCost: 0,
+              lastActive: null,
+            }
+            const m = meta[s.id]
+            entry.sessions.push({
+              ...s,
+              tags: m?.tags || [],
+              pinned: m?.pinned || false,
+              nickname: m?.nickname || null,
+            })
+            entry.totalCost += s.estimated_cost_usd || 0
+            if (!entry.lastActive || (s.modified_at && s.modified_at > entry.lastActive)) {
+              entry.lastActive = s.modified_at
+            }
+            projectMap.set(name, entry)
+          }
+
+          const projects = Array.from(projectMap.values())
+            .sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''))
+
+          res.end(JSON.stringify({ projects }))
+        } catch (err) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ projects: [], error: String(err) }))
+        }
+        return
+      }
+
       // GET /api/axon/sessions/{id}
       const sessionDetailMatch = url.match(/^\/api\/axon\/sessions\/([0-9a-f-]{36})$/)
       if (sessionDetailMatch) {

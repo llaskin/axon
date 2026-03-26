@@ -16,6 +16,7 @@ const mainNav: { id: ViewId; label: string; icon: typeof Clock }[] = [
 ]
 
 const utilNav: { id: ViewId; label: string; icon: typeof Clock }[] = [
+  { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 

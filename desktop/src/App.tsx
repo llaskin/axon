@@ -36,8 +36,8 @@ import { useProjectStore } from '@/store/projectStore'
 // Navigating between any of them slides the strip — same
 // animation everywhere. Sub-views overlay on top.
 
-const STRIP: ViewId[] = ['agents', 'settings']
-const FULL_BLEED = new Set<ViewId>(['agents'])
+const STRIP: ViewId[] = ['agents', 'terminal', 'settings']
+const FULL_BLEED = new Set<ViewId>(['agents', 'terminal'])
 const EDITORIAL = new Set<ViewId>([])
 
 /* ── Strip pane — lazy-mounted, slides horizontally ──────────── */
@@ -161,6 +161,7 @@ function ViewRouter() {
             offsetPercent={(i - currentIdx) * 100}
           >
             {viewId === 'agents' && <SessionsView />}
+            {viewId === 'terminal' && <AgentView />}
             {viewId === 'settings' && <SettingsView />}
           </StripPane>
         ))}

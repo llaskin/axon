@@ -13,6 +13,7 @@ const HINT_DURATION_MS = 4000
 
 const mainNav: { id: ViewId; label: string; icon: typeof Clock }[] = [
   { id: 'agents', label: 'Agent Sessions', icon: Brain },
+  { id: 'timeline', label: 'Analytics', icon: Clock },
 ]
 
 const utilNav: { id: ViewId; label: string; icon: typeof Clock }[] = [

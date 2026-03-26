@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useUIStore } from '@/store/uiStore'
 import { useSessions, useSessionSearch, useSessionsByProject, usePromptTimeline, type SessionSummary, type SearchResult } from '@/hooks/useSessions'
 import { Search, GitBranch, MessageSquare, Wrench, DollarSign, Star, ChevronDown, FileText, AlertCircle, Terminal as TerminalIcon } from 'lucide-react'
-import { AnalyticsView } from './AnalyticsView'
 import { AGENTS, type AgentId } from '@/lib/agents/types'
 
 // Heat strip colors — warm palette from design system
@@ -472,7 +471,7 @@ function RelatedSessions({ sessionId, projectName, onSelect }: {
 
 // --- Day View (groups sessions by calendar day) ---
 
-type ViewMode = 'sessions' | 'day' | 'analytics'
+type ViewMode = 'sessions' | 'day'
 
 interface DayGroup {
   date: string
@@ -956,7 +955,7 @@ export function SessionsView() {
       <div className="shrink-0 flex items-center gap-2 px-4 py-1 border-b border-ax-border-subtle bg-ax-base">
         {/* View mode tabs (Day / Sessions / Analytics) */}
         <div className="flex items-center gap-0.5 bg-ax-sunken rounded-md p-0.5">
-          {(['day', 'sessions', 'analytics'] as ViewMode[]).map(vm => (
+          {(['day', 'sessions'] as ViewMode[]).map(vm => (
             <button
               key={vm}
               onClick={() => setViewMode(vm)}
@@ -966,7 +965,7 @@ export function SessionsView() {
                   : 'text-ax-text-tertiary hover:text-ax-text-secondary'
                 }`}
             >
-              {vm === 'day' ? 'Day' : vm === 'sessions' ? 'Sessions' : 'Analytics'}
+              {vm === 'day' ? 'Day' : 'Sessions'}
             </button>
           ))}
         </div>
@@ -1014,9 +1013,6 @@ export function SessionsView() {
           )}
           {viewMode === 'day' && (
             <DayViewList sessions={sessions} />
-          )}
-          {viewMode === 'analytics' && (
-            <AnalyticsView />
           )}
         </div>
       </div>

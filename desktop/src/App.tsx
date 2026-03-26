@@ -11,6 +11,15 @@ import { MorningView } from '@/views/MorningView'
 import { OnboardingView } from '@/views/OnboardingView'
 import { AgentView } from '@/views/AgentView'
 import { SessionsView } from '@/views/SessionsView'
+import { AnalyticsView } from '@/views/AnalyticsView'
+
+function AnalyticsViewPage() {
+  return (
+    <div className="max-w-3xl mx-auto px-8 py-10">
+      <AnalyticsView />
+    </div>
+  )
+}
 import { TodosView } from '@/views/TodosView'
 import { SourceControlView } from '@/views/SourceControlView'
 import { AboutView } from '@/views/AboutView'
@@ -36,7 +45,7 @@ import { useProjectStore } from '@/store/projectStore'
 // Navigating between any of them slides the strip — same
 // animation everywhere. Sub-views overlay on top.
 
-const STRIP: ViewId[] = ['agents', 'settings']
+const STRIP: ViewId[] = ['agents', 'timeline', 'settings']
 const FULL_BLEED = new Set<ViewId>(['agents'])
 const EDITORIAL = new Set<ViewId>([])
 
@@ -161,6 +170,7 @@ function ViewRouter() {
             offsetPercent={(i - currentIdx) * 100}
           >
             {viewId === 'agents' && <SessionsView />}
+            {viewId === 'timeline' && <AnalyticsViewPage />}
             {viewId === 'settings' && <SettingsView />}
           </StripPane>
         ))}

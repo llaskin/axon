@@ -2108,6 +2108,20 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         return
       }
 
+      // GET /api/axon/sessions/analytics?since=ISO8601
+      if (url.startsWith('/api/axon/sessions/analytics')) {
+        try {
+          const sinceParam = new URL(url, 'http://localhost').searchParams.get('since')
+          const { getAnalytics } = await import('../lib/sessionDb')
+          const data = getAnalytics(sinceParam || undefined)
+          res.end(JSON.stringify(data))
+        } catch (err) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: String(err) }))
+        }
+        return
+      }
+
       // GET /api/axon/sessions/status
       if (url === '/api/axon/sessions/status') {
         try {

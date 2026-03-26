@@ -179,7 +179,7 @@ function SessionDetailPanel({ sessionId }: { sessionId: string }) {
         <div>
           <h4 className="font-mono text-micro text-ax-text-tertiary uppercase tracking-wider mb-2">Tool Usage</h4>
           <div className="space-y-1">
-            {toolCalls.slice(0, 8).map(tc => (
+            {toolCalls.map(tc => (
               <div key={tc.tool} className="flex items-center gap-2">
                 <span className="font-mono text-micro text-ax-text-secondary w-24 shrink-0 text-right truncate" title={tc.tool}>{tc.tool}</span>
                 <div className="flex-1 h-3 bg-ax-sunken rounded-full overflow-hidden">
@@ -204,8 +204,8 @@ function SessionDetailPanel({ sessionId }: { sessionId: string }) {
           <h4 className="font-mono text-micro text-ax-text-tertiary uppercase tracking-wider mb-2">
             Files Touched ({detail.filesTouched.length})
           </h4>
-          <div className="space-y-0.5 max-h-40 overflow-y-auto">
-            {detail.filesTouched.slice(0, 20).map(f => {
+          <div className="space-y-0.5 max-h-80 overflow-y-auto">
+            {detail.filesTouched.map(f => {
               let ops: string[] = []
               try { ops = JSON.parse(f.operations) } catch { ops = [f.operations] }
               return (
@@ -217,11 +217,6 @@ function SessionDetailPanel({ sessionId }: { sessionId: string }) {
                 </div>
               )
             })}
-            {detail.filesTouched.length > 20 && (
-              <p className="font-mono text-micro text-ax-text-tertiary mt-1">
-                +{detail.filesTouched.length - 20} more
-              </p>
-            )}
           </div>
         </div>
       )}
@@ -233,7 +228,7 @@ function SessionDetailPanel({ sessionId }: { sessionId: string }) {
             Git Commits ({gitCommands.length})
           </h4>
           <div className="space-y-1">
-            {gitCommands.slice(0, 5).map((cmd, i) => (
+            {gitCommands.map((cmd, i) => (
               <div key={i} className="flex items-start gap-2">
                 <TerminalIcon size={10} className="text-ax-text-tertiary mt-0.5 shrink-0" />
                 <code className="font-mono text-micro text-ax-text-secondary break-all">{cmd}</code>
@@ -278,7 +273,7 @@ function SessionCard({ session, expanded, onToggle, onExpandSession }: {
       {/* Title row */}
       <div className="flex items-start gap-2 mb-2">
         {s.pinned && <Star size={14} className="text-ax-warning mt-1 shrink-0 fill-current" />}
-        <h3 className="font-serif italic text-h4 text-ax-text-primary line-clamp-2 flex-1">
+        <h3 className={`font-serif italic text-h4 text-ax-text-primary flex-1 ${expanded ? '' : 'line-clamp-2'}`}>
           {title}
         </h3>
         <ChevronDown
@@ -295,7 +290,7 @@ function SessionCard({ session, expanded, onToggle, onExpandSession }: {
       {/* Search snippet */}
       {snippet && (
         <p
-          className="text-small text-ax-text-secondary mb-2 line-clamp-2"
+          className={`text-small text-ax-text-secondary mb-2 ${expanded ? '' : 'line-clamp-2'}`}
           dangerouslySetInnerHTML={{ __html: snippet }}
         />
       )}
@@ -393,7 +388,7 @@ function PromptTimeline({ sessionId }: { sessionId: string }) {
               {new Date(p.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
             </div>
             <div className="text-small text-ax-text-secondary mt-0.5 leading-relaxed">
-              {renderRedactedText(p.display.length > 200 ? p.display.slice(0, 200) + '...' : p.display)}
+              {renderRedactedText(p.display)}
             </div>
           </div>
         ))}

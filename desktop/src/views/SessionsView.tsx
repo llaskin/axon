@@ -642,10 +642,7 @@ function SessionList({ sessions, indexStatus, loading, error }: {
   loading: boolean
   error: string | null
 }) {
-  const activeProject = useProjectStore((s) => s.activeProject)
-  const projects = useProjectStore((s) => s.projects)
   const [search, setSearch] = useState('')
-  const [crossProject, setCrossProject] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
@@ -684,35 +681,9 @@ function SessionList({ sessions, indexStatus, loading, error }: {
   return (
     <div>
       <header className="mb-8">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-body text-ax-text-secondary mt-2">
-              <span className="font-mono">{sessions.length}</span> Claude Code sessions
-              {activeProject && !crossProject && (
-                <> in <span className="font-mono">{activeProject}</span></>
-              )}
-              {crossProject && (
-                <> across <span className="font-mono">{projects.length}</span> projects</>
-              )}
-            </p>
-          </div>
-
-          {projects.length > 1 && (
-            <button
-              onClick={() => setCrossProject(v => !v)}
-              aria-label={crossProject ? 'Show current project only' : 'Search across all projects'}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-small font-mono transition-all
-                focus:outline-none focus-visible:ring-2 focus-visible:ring-ax-brand
-                ${crossProject
-                  ? 'bg-ax-brand-subtle text-ax-brand border border-ax-brand/30'
-                  : 'bg-ax-sunken text-ax-text-tertiary hover:text-ax-text-secondary border border-ax-border-subtle'
-                }`}
-            >
-              {crossProject ? <Globe size={14} /> : <FolderOpen size={14} />}
-              {crossProject ? 'All projects' : 'This project'}
-            </button>
-          )}
-        </div>
+        <p className="text-body text-ax-text-secondary mt-2">
+          <span className="font-mono">{sessions.length}</span> sessions across all agents
+        </p>
 
         {/* Index progress */}
         {indexing && (

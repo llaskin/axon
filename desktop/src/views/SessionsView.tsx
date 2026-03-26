@@ -1124,7 +1124,7 @@ export function SessionsView() {
               onReorganize={() => canvasState.reorganize(sessions)}
               onReorgApply={canvasState.applyReorg}
               onReorgCancel={canvasState.cancelReorg}
-              onOpenSession={(id) => useUIStore.getState().openTerminal(id)}
+              onOpenSession={() => { /* Terminal removed for security */ }}
               onRemoveTile={canvasState.removeTile}
               onSessionRenamed={refetch}
               onAddTile={canvasState.addTile}

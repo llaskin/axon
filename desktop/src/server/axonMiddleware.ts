@@ -9,7 +9,8 @@ import { hashSync, compareSync } from 'bcryptjs'
 let discoveryCache: { repos: { name: string; path: string; remote: string; commitCount: number; lastActivity: string }[]; timestamp: number } | null = null
 const DISCOVERY_CACHE_TTL = 60_000
 import type { IncomingMessage, ServerResponse } from 'http'
-import { spawnTerminal, hasTerminal, killTerminal, killAllTerminals } from '../lib/terminalManager'
+// Terminal manager removed for security — no shell spawning
+// import { spawnTerminal, hasTerminal, killTerminal, killAllTerminals } from '../lib/terminalManager'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 /* ── Classify Claude stream-json messages into typed SSE events ── */
@@ -2003,48 +2004,7 @@ export function createAxonMiddleware(config: AxonMiddlewareConfig) {
         return
       }
 
-      // --- Terminal Endpoints ---
-
-      // POST /api/axon/terminal/spawn
-      if (url === '/api/axon/terminal/spawn' && req.method === 'POST') {
-        const body = await new Promise<string>((resolve) => {
-          let data = ''
-          req.on('data', (chunk: Buffer) => { data += chunk.toString() })
-          req.on('end', () => resolve(data))
-        })
-
-        const { project, sessionId } = JSON.parse(body) as {
-          project: string
-          sessionId?: string
-        }
-
-        let cwd = process.cwd()
-        try {
-          const cfg = await readFile(
-            join(AXON_HOME, 'workspaces', project, 'config.yaml'), 'utf-8'
-          )
-          const projectPath = cfg.match(/^project_path:\s*(.+)$/m)?.[1]?.trim()
-          if (projectPath && existsSync(projectPath)) cwd = projectPath
-        } catch { /* use cwd */ }
-
-        try {
-          const terminalId = spawnTerminal(cwd, undefined, sessionId)
-          res.end(JSON.stringify({ terminalId }))
-        } catch (err) {
-          console.error('[Axon API] Terminal spawn failed:', err)
-          res.statusCode = 500
-          res.end(JSON.stringify({ error: `Terminal spawn failed: ${String(err)}` }))
-        }
-        return
-      }
-
-      // DELETE /api/axon/terminal/:id
-      const termKillMatch = url.match(/^\/api\/axon\/terminal\/([^/?]+)$/)
-      if (termKillMatch && req.method === 'DELETE') {
-        killTerminal(termKillMatch[1])
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
+      // Terminal endpoints removed for security — no shell spawning
 
       // PATCH /api/axon/sessions/:id/meta
       const metaPatchMatch = url.match(/^\/api\/axon\/sessions\/([^/?]+)\/meta$/)
@@ -2568,37 +2528,7 @@ export function handleAxonUpgrade(
   head: Buffer,
   _axonHome?: string,
 ) {
-  const url = new URL(req.url || '', `http://${req.headers.host}`)
-  if (url.pathname === '/api/axon/terminal/ws') {
-    // Auth check for remote WebSocket connections — uses session token (not password)
-    const remoteIp = req.socket.remoteAddress || ''
-    const isLocal = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1'
-    if (!isLocal) {
-      const token = url.searchParams.get('token') || ''
-      if (!token || !isValidSession(token)) {
-        console.error('[Axon WS] Rejected: invalid session')
-        socket.destroy()
-        return true
-      }
-    }
-
-    const termId = url.searchParams.get('id')
-    console.log(`[Axon WS] Upgrade request: termId=${termId} hasTerminal=${termId ? hasTerminal(termId) : 'N/A'}`)
-    if (!termId || !hasTerminal(termId)) {
-      console.error(`[Axon WS] Rejected: terminal ${termId} not found`)
-      socket.destroy()
-      return
-    }
-    // Remove any HTTP server timeout on this socket — it's now a long-lived WebSocket.
-    // Without this, Node.js / Vite may close the socket after its requestTimeout (often ~24s).
-    if ('setTimeout' in socket) {
-      (socket as import('net').Socket).setTimeout(0)
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req, termId)
-    })
-    return true
-  }
+  // Terminal WebSocket handler removed for security — no shell spawning
   return false
 }
 

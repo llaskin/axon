@@ -2594,7 +2594,8 @@ export function handleAxonUpgrade(
 /* ── Process cleanup ── */
 
 export function setupCleanupHandlers(httpServer?: { on: (event: string, fn: () => void) => void }) {
-  const cleanup = () => killAllTerminals()
+  // Terminal cleanup removed — no shell spawning
+  const cleanup = () => {}
   process.on('exit', cleanup)
   process.on('SIGINT', cleanup)
   process.on('SIGTERM', cleanup)

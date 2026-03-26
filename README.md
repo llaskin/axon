@@ -1,125 +1,105 @@
-<p align="center">
-  <img src="docs/assets/axon-demo.gif" alt="Axon demo" width="700" />
-</p>
+# Agent Sessions
 
-<h1 align="center">Axon</h1>
+A local-first dashboard for tracking your AI coding agent activity across Claude Code, Codex, Cursor, and GitHub Copilot. See what you worked on, how many tokens you used, and drill into session details — all from a single unified view.
 
-<p align="center">
-  Developer memory system. Nightly AI rollups, morning briefings, decision traces.<br/>
-  <strong>CLI + Desktop app.</strong> Open source (MIT).
-</p>
+## Features
 
-<p align="center">
-  <a href="https://github.com/AxonEmbodied/AXON/releases/latest"><img src="https://img.shields.io/github/v/release/AxonEmbodied/axon?style=flat-square&label=latest" alt="Release" /></a>
-  <a href="https://github.com/AxonEmbodied/AXON/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
-  <a href="https://discord.gg/kMw4XKn7v7"><img src="https://img.shields.io/discord/1481974231217606718?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord" /></a>
-</p>
+- **Day View** — sessions grouped by calendar day with expandable cards
+- **Sessions View** — flat list with search, filters, and full session detail drill-down
+- **Analytics** — token usage by agent and model, period filtering (today/week/month/all time)
+- **Multi-Agent** — supports Claude Code, Codex, Cursor, and GitHub Copilot
+- **Agent Filter Pills** — toggle between All agents or filter to a specific one
+- **Prompt Timeline** — see the sequence of prompts in each session
+- **Redaction** — secrets (API keys, tokens, connection strings) scrubbed before display
+- **Local-First** — all data stays on your machine. No cloud, no accounts.
 
----
+## Prerequisites
 
-Your AI forgets everything between sessions. Axon doesn't.
-
-It watches what you build, synthesises what happened overnight, and briefs you every morning. All stored as local markdown files you own. No cloud. No accounts. No vendor lock-in.
+- **Node.js** 20+ (LTS recommended)
+- **npm** 9+
+- At least one AI coding agent installed:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`~/.claude/`)
+  - [Codex](https://github.com/openai/codex) (`~/.codex/`)
+  - [Cursor](https://cursor.sh) (`~/.cursor/`)
+  - [GitHub Copilot](https://github.com/features/copilot) (`~/.copilot/`)
 
 ## Quick Start
 
 ```bash
-npm i -g axon-dev
-axon init --project my-app --path ~/Github/my-app
-axon cron install    # set up nightly rollups
-axon morning         # your first briefing
-```
-
-Or grab the [desktop app](https://github.com/AxonEmbodied/axon/releases?q=desktop-v) (macOS).
-
-## What It Does
-
-```bash
-axon collect    # gather signals — git log, file tree, session activity
-axon rollup     # nightly AI synthesis — what happened, what was decided, what matters
-axon morning    # conversational briefing — where you are, what to focus on
-```
-
-**Every rollup captures decision traces** — what the input was, what constraints existed, what tradeoffs were weighed, what was decided. These compound over time into a searchable history of *why* your project looks the way it does.
-
-### Morning Briefing
-
-<img src="docs/assets/morning-briefing.png" alt="Morning briefing" width="700" />
-
-Your day starts with full context. Priorities, risk flags, open loops, recommended first move — synthesised from last night's rollup.
-
-### Spatial Canvas
-
-<img src="docs/assets/spatial-canvas.png" alt="Spatial canvas" width="700" />
-
-All your Claude Code sessions as tiles on an infinite workspace. Organise into zones. Click any tile to open a live terminal. The layout is the context.
-
-### Timeline
-
-<img src="docs/assets/timeline.png" alt="Timeline" width="700" />
-
-Rollup cards showing decisions, commits, risk flags, and momentum over time. Expand any card to see decision traces.
-
-## Where Memory Lives
-
-```
-~/.axon/workspaces/my-project/
-├── state.md              # current context snapshot
-├── stream.md             # append-only raw log
-├── episodes/             # nightly rollups
-│   └── 2026-03-12_rollup.md
-├── dendrites/            # raw input signals
-├── mornings/             # briefing conversations
-└── config.yaml           # project config
-```
-
-Plain text. Git-versioned on every rollup. Readable in twenty years with `cat`. If Axon dies tomorrow, your data survives. There's nothing to migrate away from.
-
-## Architecture
-
-- **CLI**: ~12 bash scripts. Zero dependencies beyond bash, jq, git, and Claude Code.
-- **Desktop**: Vite + React + Zustand + Tailwind + xterm.js
-- **Bridge**: Filesystem (`~/.axon/`) + HTTP API
-- **Terminals**: node-pty with WebSocket, 60s grace period
-- **Search**: SQLite FTS5 for sessions, deep AI search with Claude
-- **Remote access**: Thin client model — server on one machine, browser on another via Tailscale
-
-## Install
-
-### CLI (npm)
-
-```bash
-npm i -g axon-dev
-```
-
-### Desktop (macOS)
-
-[![Download latest](https://img.shields.io/github/v/release/AxonEmbodied/axon?filter=desktop-v*&label=Download%20Desktop&style=for-the-badge)](https://github.com/AxonEmbodied/axon/releases/latest)
-
-### From source
-
-```bash
-git clone https://github.com/AxonEmbodied/axon.git
+# Clone the repo
+git clone https://github.com/llaskin/axon.git
 cd axon/desktop
+
+# Install dependencies
 npm install
+
+# Start the dev server
 npm run dev
 ```
 
-## Why Files, Not Weights
+The app starts at **http://localhost:1420**. Open it in your browser.
 
-The full argument is in [the blog post](https://robmaye.github.io/blog/open-sourcing-my-exoskeleton), but the short version:
+## What You'll See
 
-- **Fine-tuning** encodes behaviour. **Files** store facts. Different problems.
-- Your `.axon/` directory works with any model. Your LoRA adapter doesn't.
-- You can read, diff, grep, and fork files. You can't fork weights.
-- If you ever want to fine-tune, Axon files are structured training data. The reverse isn't true.
+The sidebar has three views:
 
-## Community
+| View | Description |
+|------|-------------|
+| **Agent Sessions** | Day/Sessions tabs showing all your AI coding sessions |
+| **Analytics** | Token usage charts by agent and model with period filtering |
+| **Settings** | Theme toggle and app configuration |
 
-- **[Discord](https://discord.gg/kMw4XKn7v7)** — where design decisions get made before they hit the repo
-- **[Blog](https://robmaye.github.io/blog/open-sourcing-my-exoskeleton)** — the full thesis
-- **[X / Twitter](https://x.com/AXONEMBODIED)** — updates and builds in public
+## How It Works
+
+Agent Sessions reads session data directly from your local agent directories:
+
+| Agent | Data Source | What's Extracted |
+|-------|-----------|-----------------|
+| Claude Code | `~/.claude/projects/*/` | Full transcripts, tool calls, files touched, tokens, model |
+| Codex | `~/.codex/state_5.sqlite` | Threads, token counts, model from config |
+| Cursor | `~/.cursor/ai-tracking/` | Code completions grouped by conversation |
+| GitHub Copilot | `~/.copilot/command-history-state.json` | CLI command history (limited data) |
+
+All data is read-only — Agent Sessions never modifies your agent data files.
+
+## Security
+
+- All data stays local. The Express server binds to `127.0.0.1` only.
+- No remote URLs loaded. No telemetry. No auto-update.
+- Secrets (API keys, tokens, connection strings, JWTs) are redacted before display.
+- No shell spawning or terminal access.
+- See `docs/data-flow-diagram.md` for the full data flow.
+
+## Nightly Rollups (Optional)
+
+Agent Sessions can generate AI-powered daily summaries of your activity using the Claude CLI:
+
+```bash
+# Install the CLI
+npm install -g .
+
+# Run a rollup for all agents
+axon rollup --project agent-sessions
+
+# Or for a specific agent
+axon rollup --project claude-sessions
+```
+
+Rollups are stored locally in `~/.axon/workspaces/*/episodes/`. Only redacted session summaries are sent to the Anthropic API during rollup generation.
+
+## Development
+
+```bash
+# Run tests
+cd desktop && npx vitest run
+
+# Type check
+cd desktop && npx tsc --noEmit
+
+# Build for production
+cd desktop && npm run build
+```
 
 ## License
 
-MIT — fork it, extend it, build something better.
+MIT

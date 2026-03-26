@@ -132,6 +132,8 @@ function migrateV2(db: Database.Database): void {
     UPDATE sessions SET estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
     WHERE estimated_total_tokens = 0 AND (estimated_input_tokens > 0 OR estimated_output_tokens > 0);
   `)
+  // Reset analytics_indexed so sessions get re-parsed for model extraction
+  db.exec(`UPDATE sessions SET analytics_indexed = 0;`)
   db.pragma('user_version = 2')
 }
 

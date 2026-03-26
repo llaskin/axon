@@ -366,6 +366,7 @@ function indexSessionAnalytics(sessionId: string, projectId: string): void {
       heatstrip_json = ?,
       tool_calls_json = ?,
       git_commands_json = ?,
+      model = COALESCE(?, model),
       analytics_indexed = 1
     WHERE id = ?
   `).run(
@@ -383,6 +384,7 @@ function indexSessionAnalytics(sessionId: string, projectId: string): void {
     JSON.stringify(parsed.heatStrip),
     JSON.stringify(parsed.toolCalls),
     JSON.stringify(parsed.gitCommands),
+    parsed.dominantModel,
     sessionId
   )
 

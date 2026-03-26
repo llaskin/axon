@@ -32,6 +32,7 @@ export interface ParsedSession {
   heuristicSummary: string | null
   heatStrip: HeatSegment[]
   gitCommands: string[]
+  dominantModel: string | null
 }
 
 // --- Shared extraction helpers ---
@@ -87,12 +88,19 @@ export function parseJsonlFile(filePath: string): ParsedSession | null {
     let messageCount = 0
     const heatStrip: HeatSegment[] = []
     const gitCommands: string[] = []
+    const modelCounts = new Map<string, number>()
 
     for (const line of lines) {
       try {
         const msg = JSON.parse(line)
 
         if (msg.type === 'user' || msg.type === 'assistant') messageCount++
+
+        // Track model usage from assistant messages
+        const model = msg.message?.model
+        if (model && typeof model === 'string') {
+          modelCounts.set(model, (modelCounts.get(model) || 0) + 1)
+        }
 
         // Usage metadata
         const usage = msg.message?.usage || msg.usage
@@ -204,7 +212,10 @@ export function parseJsonlFile(filePath: string): ParsedSession | null {
       estimatedCostUsd,
       heuristicSummary: buildHeuristicSummary(filesTouched, bashCount, gitCommands.length, errorCount, totalToolCalls),
       heatStrip,
-      gitCommands
+      gitCommands,
+      dominantModel: modelCounts.size > 0
+        ? [...modelCounts.entries()].sort((a, b) => b[1] - a[1])[0][0]
+        : null,
     }
   } catch {
     return null

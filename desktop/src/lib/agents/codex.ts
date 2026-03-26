@@ -1,4 +1,4 @@
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import Database from 'better-sqlite3'
@@ -9,7 +9,21 @@ import { AGENTS } from './types'
  * Codex adapter — reads threads from ~/.codex/state_5.sqlite.
  * Timestamps are Unix epoch integers → converted to ISO 8601.
  * tokens_used is a single total (no input/output split).
+ * Model name read from config.toml (threads table only has model_provider).
  */
+
+function readCodexModel(): string | null {
+  try {
+    const configPath = join(homedir(), '.codex', 'config.toml')
+    if (!existsSync(configPath)) return null
+    const content = readFileSync(configPath, 'utf-8')
+    const match = content.match(/^model\s*=\s*"([^"]+)"/m)
+    return match ? match[1] : null
+  } catch {
+    return null
+  }
+}
+
 export const codexAdapter: AgentAdapter = {
   info: AGENTS.codex,
 
@@ -20,6 +34,8 @@ export const codexAdapter: AgentAdapter = {
   discoverSessions(): AgentSession[] {
     const dbPath = join(homedir(), '.codex', 'state_5.sqlite')
     if (!existsSync(dbPath)) return []
+
+    const configModel = readCodexModel()
 
     try {
       const db = new Database(dbPath, { readonly: true })
@@ -34,7 +50,7 @@ export const codexAdapter: AgentAdapter = {
       return threads.map(t => ({
         id: `codex:${t.id}`,
         agent: 'codex' as const,
-        model: t.model_provider || null,
+        model: configModel || t.model_provider || null,
         firstPrompt: t.first_user_message || null,
         summary: t.title || null,
         heuristicSummary: t.title || null,
